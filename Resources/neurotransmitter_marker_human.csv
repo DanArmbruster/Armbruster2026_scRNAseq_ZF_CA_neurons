@@ -1,0 +1,27 @@
+dopa_out;dopa-d1like_in;dopa-d2like_in;nora_out;nora_in;gaba_out;gaba_in;glut_out;glut_in;chol_out;chol_in;glycin_out;glycin_in;hist_out;hist_in;5-HT_out;5-HT_in
+TH;DRD1;DRD2;TH;ADRA2A;GAD1;GABRA1;SLC17A6;GRIA1;CHAT;CHRNA1;SLC6A5;GLRA1;HNMT;HRH1;TPH1;HTR1A
+SLC6A3;DRD5;DRD3;DBH;ADRA2B;GAD2;GABRA2;SLC17A7;GRIA2;SLC18A3;CHRNA2;SLC6A9;GLRA2;HDC;hrh2b;TPH2;HTR1B
+SLC18A2;;DRD4;SLC18A2;ADRA2C;SLC32A1;GABRA3;SLC17A8;GRIA3;SLC5A7;CHRNA3;;GLRA3;;HRH3;;HTR1D
+;;;;;;GABRA4;;GRIA4;;CHRNA4;;GLRA4;;HRH4;;HTR1E
+;;;;;;GABRA5;;GRID1;;CHRNA5;;GLRB;;;;HTR1F
+;;;;;;GABRA6;;GRID2;;CHRNA6;;;;;;HTR2A
+;;;;;;GABRB1 ;;GRIK1;;CHRNA7;;;;;;HTR2B
+;;;;;;GABRB2;;GRIK2;;CHRNA8;;;;;;HTR2C
+;;;;;;GABRB3;;GRIK3;;CHRNA9;;;;;;HTR4
+;;;;;;GABRD;;GRIK4;;CHRNA10;;;;;;HTR5A
+;;;;;;GABRE;;GRIK5;;CHRNB1;;;;;;HTR5BP
+;;;;;;GABRG1;;GRIN1;;CHRNB2;;;;;;HTR6
+;;;;;;GABRG2;;GRIN2A;;CHRNB3;;;;;;HTR7
+;;;;;;GABRG3;;GRIN2B;;CHRNB4;;;;;;
+;;;;;;GABRP;;GRIN2C;;CHRND;;;;;;
+;;;;;;GABRQ;;GRIN2D;;CHRNE;;;;;;
+;;;;;;GABRR1;;GRIN3A;;CHRNG;;;;;;
+;;;;;;GABRR2;;GRIN3B;;;;;;;;
+;;;;;;GABRR3;;GRM1;;;;;;;;
+;;;;;;GABBR1;;GRM2;;;;;;;;
+;;;;;;GABBR2 ;;GRM3;;;;;;;;
+;;;;;;;;GRM4;;;;;;;;
+;;;;;;;;GRM5;;;;;;;;
+;;;;;;;;GRM6;;;;;;;;
+;;;;;;;;GRM7;;;;;;;;
+;;;;;;;;GRM8;;;;;;;;

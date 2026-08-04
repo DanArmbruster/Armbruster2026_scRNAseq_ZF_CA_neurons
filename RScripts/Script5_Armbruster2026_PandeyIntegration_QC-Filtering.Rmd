@@ -1,0 +1,293 @@
+---
+title: "Script5_Armbruster2026_PandeyIntegration_QC-Filtering"
+author: "Daniel Armbruster"
+date: "2026-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+- This script performed quality control, preprocessing, and merging of the published telencephalon 10X-based scRNAseq dataset from Pandey et al. 2023 (10.1101/gr.277278.122) with subsets of the annotated CA dataset we generated in Script 3.
+
+- The published whole telencephalon dataset consists of samples derived from 6 dpf, 15 dpf and adult zebrafish and was deposited as mapped barcode, features and matrix files in the NCBI Gene Expression Omnibus under the accession number GSE212314. 
+
+- The session info including the used packages and their versions is provided at the end of this script.
+
+# 1. Load Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+# 2. Load Data and Generate Seurat Object
+
+```{r}
+# Load mapped output from the published dataset and generate a list of sample-specific Seurat objects with initial filtering of cells expressing fewer than 200 genes.
+directory <- "Resources/Pandey2023_mapped/"
+dir_lists <- basename(list.dirs(path = directory, full.names = TRUE))[-1]
+pandey_seurat_objects <- list()
+for (dir in dir_lists){
+  sparse_matrix <- Read10X(data.dir = paste(directory, dir, "/", sep = ""))
+  seurat_object <- CreateSeuratObject(counts = sparse_matrix, min.features = 200)
+  pandey_seurat_objects[[dir]] <- seurat_object
+}
+
+
+```
+
+# 3 Quality Control
+
+## 3.1 Prepare Metadata for QC
+
+-   Store genes detected per UMI, mitochondrial counts, cell names, and sample name in metadata
+-   Rename count and feature columns
+
+```{r}
+for (seurat_object in names(pandey_seurat_objects)) {
+  
+  # Extract seurat object to modify from list
+  obj <- pandey_seurat_objects[[seurat_object]]
+  
+  # Calculate log10-transformed genes per UMI ratio
+  obj$log10GenesPerUMI <- log10(obj$nFeature_RNA)/log10(obj$nCount_RNA)
+  
+  # Add mitochondrial gene expression percentage
+  obj$MTratio <- PercentageFeatureSet(obj, pattern = "mt-*")
+  
+  # Add Cell name
+  obj$cells <- rownames(obj@meta.data)
+  obj@meta.data <- obj@meta.data %>%
+    dplyr::rename(nUMI = nCount_RNA, nGene = nFeature_RNA)
+  
+  # Add sample ID
+  obj$sample <- seurat_object
+  
+  #Assign modified seurat object back to list 
+  pandey_seurat_objects[[seurat_object]] <- obj
+  
+}
+```
+
+- Extract metadata from each Seurat object and generate a corresponding list for downstream QC assessment
+
+```{r}
+pandey_metadata <- list()
+
+for (seurat_object in names(pandey_seurat_objects)) {
+  metadata <- pandey_seurat_objects[[seurat_object]]@meta.data
+  pandey_metadata[[seurat_object]] <- metadata
+}
+```
+
+## 3.2 Assessing QC metrics
+
+## 3.1 Cell number
+
+```{r}
+# Plot of cell number
+cell_numbers <- list()
+
+for (object in names(pandey_metadata)){
+  cell_numbers[[object]] <- length(pandey_metadata[[object]]$cells)
+}
+
+barplot(unlist(cell_numbers))
+```
+
+## 3.2 Counts per cell
+
+```{r}
+# Visualize the distribution of UMI counts per cell across samples
+all_metadata <- bind_rows(pandey_metadata, .id = "sample_id")
+
+
+nUMI_plot <- ggplot(all_metadata, aes(x = sample, y = log10(nUMI), fill = sample)) +
+  geom_violin() +
+  geom_jitter(shape = 16, size = 0.5, position = position_jitter(0.2)) +
+  stat_summary(fun = mean, geom = "point", size = 5, color = "red", shape = 95) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  ) +
+  ggtitle("UMIs per cell")
+
+nUMI_plot
+```
+
+## 3.3 Genes per cell
+
+```{r}
+# Visualize the distribution of genes per cell across samples
+nGene_plot <- ggplot(all_metadata, aes(x = sample, y = log10(nGene), fill = sample)) +
+  geom_violin() +
+  geom_jitter(shape = 16, size = 0.5, position = position_jitter(0.2)) +
+  stat_summary(fun = mean, geom = "point", size = 5, color = "red", shape = 95) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  ) +
+  ggtitle("Genes per cell")
+
+nGene_plot
+```
+
+## 3.4 MT content:
+
+```{r}
+# Visualize the mitochondrial gene content across samples
+nMT_plot <- ggplot(all_metadata, aes(x = sample, y =MTratio, fill = sample)) +
+  geom_violin() +
+  geom_jitter(shape = 16, size = 0.5, position = position_jitter(0.2)) +
+  stat_summary(fun = mean, geom = "point", size = 5, color = "red", shape = 95) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  ) +
+  ggtitle("MT % per cell")
+
+nMT_plot
+
+```
+
+# 4. Loading and preparing forebrain seurat object from figure 4
+
+```{r}
+# Load annotated forebrain Seurat object generated in Script 3
+vFB_cells <- readRDS(file = "D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/RDS_files/Script3_Armbruster2026_annotated.rds")
+
+# Subset the ventral forebrain/progenitor and olfactory bulb clusters and remve unnecessary metadata from previous analyses
+vFB_cells <- subset(vFB_cells, idents=c("vFb/Prog1","vFb/Prog2", "OB"))
+vFB_cells$pANN_0.25_0.22_271 <- NULL
+vFB_cells$DF.classifications_0.25_0.22_271 <- NULL
+vFB_cells$S.Score <- NULL
+vFB_cells$G2M.Score <- NULL
+vFB_cells$Phase <- NULL
+vFB_cells$nCount_SCT <- NULL
+vFB_cells$nFeature_SCT <- NULL
+vFB_cells$seurat_clusters <- NULL
+vFB_cells$SCT_snn_res.1 <- NULL
+vFB_cells$EGFPratio <- NULL
+vFB_cells$dataset <- "5dpf_own"
+```
+
+# 5. Harmonize gene symbols and merging
+
+```{r}
+#### ----- Extract count matrices and metadata, then convert gene symbols to Ensembl IDs ----- ####
+# Both datasets were generated using the same zebrafish reference genome but different Ensembl releases. As gene symbols might differ, we will convert them back to Ensembl IDs prior merging. 
+
+## Merge all published Pandey samples into a single Seurat object
+pandey_merged <- Reduce(function(x, y) merge(x, y), pandey_seurat_objects)
+pandey_merged$dataset <- "pandey"
+
+# Load gene feature table and convert gene symbols to Ensembl identifiers
+pandey_features <- read.csv(
+  "D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Resources/pandey_features.tsv",
+  sep = "\t",
+  header = FALSE,
+  col.names = c("ensembl.id", "gene.symbol", "column3"))
+matched_ids_pandey <- pandey_features$ensembl.id[match(rownames(pandey_merged), pandey_features$gene.symbol)]
+pandey_merged <- pandey_merged[!is.na(matched_ids_pandey), ]
+rownames(pandey_merged) <- matched_ids_pandey[!is.na(matched_ids_pandey)]
+```
+
+```{r}
+# Convert gene symbols of own dataset to Ensembl identifiers
+own_features <- read.csv(
+  "D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Resources/own_features.tsv",
+  sep = "\t",
+  header = FALSE,
+  col.names = c("ensembl.id", "gene.symbol", "column3")
+)
+
+# Extract count matrix and metadata from own Seurat object
+own_counts <- GetAssayData(vFB_cells,assay = "RNA", slot = "counts")
+own_meta <- vFB_cells@meta.data
+
+# Convert gene symbols to Ensembl identifiers and recreate Seurat object
+matched_ids_own <- own_features$ensembl.id[match(rownames(own_counts), own_features$gene.symbol)]
+own_counts <- own_counts[!is.na(matched_ids_own), ]
+rownames(own_counts) <- matched_ids_own[!is.na(matched_ids_own)]
+vFB_cells <- CreateSeuratObject(counts = own_counts, meta.data = own_meta, project = "Own")
+
+# Retain only genes shared between both datasets
+common_genes <- intersect(rownames(pandey_merged), rownames(vFB_cells))
+pandey_merged <- subset(pandey_merged, features = common_genes)
+vFB_cells <- subset(vFB_cells, features = common_genes)
+
+# Merge datasets using common Ensembl identifiers
+merged_seurat_object <- merge(pandey_merged, y=vFB_cells)
+
+# Convert Ensembl identifiers back to gene symbols
+ensembl_to_own <- setNames(own_features$gene.symbol,
+                           own_features$ensembl.id)
+mapped_symbols <- unname(ensembl_to_own[rownames(merged_seurat_object)])
+
+# Check if either NA are generated.
+sum(is.na(mapped_symbols))
+
+# Or if their are duplicated gene symbols now
+dup_symbols <- mapped_symbols[duplicated(mapped_symbols)]
+length(unique(dup_symbols))
+
+# Neither NAs nor duplicates are generated
+
+# Change the rownames to the mapped symbols
+rownames(merged_seurat_object) <- mapped_symbols
+```
+
+# 6 Filtering
+
+## 6.1 Cell level filtering
+
+-   Filtering thresholds:
+
+    -   nGene \>500
+
+    -   Mtratio \< 8 (only cells with less then 8 % mitochondrial reads)
+
+    ```{r}
+    merged_seurat_object_filtered <- subset(x = merged_seurat_object, subset = (nGene >=500 & MTratio < 8))
+    ```
+
+## 5.2 Gene level filtering
+
+-   Filter out genes with 0 counts over all cells and genes that are not detected in at least 3 cells.
+
+```{r}
+# Only keep genes expressed in at least 3 cells
+merged_seurat_object_filtered <- JoinLayers(merged_seurat_object_filtered) 
+allown_counts <- GetAssayData(object = merged_seurat_object_filtered, layer = "counts")
+allown_nonzero <- allown_counts > 0
+allown_keep_genes <- Matrix::rowSums(allown_nonzero) >=3
+allown_filtered_counts <- allown_counts[allown_keep_genes,]
+merged_seurat_object_filtered <- CreateSeuratObject(allown_filtered_counts, meta.data = merged_seurat_object_filtered@meta.data)
+```
+
+# 6 Save as RDS file
+
+```{r}
+saveRDS(merged_seurat_object_filtered, file = "RDS_files/Script5_Armbruster2026_Pandey_integ_filtered.rds")
+```
+
+```{r}
+# Session info
+sessionInfo()
+```
+
+
+```{r}
+# Remove objects to reduce memory usage 
+rm(list=ls())
+gc()
+```

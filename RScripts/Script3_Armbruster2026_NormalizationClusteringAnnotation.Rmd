@@ -1,0 +1,1187 @@
+---
+title: "Script3_Armbruster2026_NormalizationClusteringAnnotation"
+author: "Daniel Armbruster"
+date: "2026-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+-   In this script we performed normalization, cell cycle correction, dimensionality reduction, clustering, and annotation of the filtered RDS file we generated in Script 2.
+
+-   Additionally, we calculated data on the differentially expressed genes and extracted differenitally expressed transcription factors which are part of Table S1. Also, in this script we generated the visualizations of Figure 1C-D and Figure S2A-D.
+
+-   Moreover, we characterized neurotransmitter and neuropeptide production/reception signatures across clusters and generated the corresponding visualization depicted in Figure 6A and B as well as the associated data presented in Table S6C-E and Table S6J-L.
+
+- The session info including the used packages and their versions is provided at the end of this script.
+
+# 1. Load Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(Seurat)
+library(AnnotationHub)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(cowplot)
+library(openxlsx)
+library(stringr)
+```
+
+# 2. Load data
+
+```{r}
+cells_singlets <- readRDS(file = "RDS_files/Script2_Armbruster2026_singlets.rds")
+```
+
+# 3. Pre-processing for normalization and clustering
+
+```{r}
+#Removal of EGFP & E2AQF2 genes as we don't want that they drive clustering
+counts <- GetAssayData(cells_singlets, slot = "counts")
+counts2 <- counts[-(which(rownames(counts) %in% "EGFP")),]
+cells_singlets <- subset(cells_singlets, features = rownames(counts2))
+counts <- GetAssayData(cells_singlets, slot = "counts")
+counts2 <- counts[-(which(rownames(counts) %in% "E2AQF2")),]
+cells_singlets <- subset(cells_singlets, features = rownames(counts2))
+
+#Remove cluster info assigned during doublet removal from the metadata
+cells_singlets$seurat_clusters <- NULL
+cells_singlets$RNA_snn_res.0.8 <- NULL
+cells_singlets <- SetIdent(cells_singlets, value = "orig.ident")
+```
+
+# 4. Assessing cell cycle variances
+
+## 4.1 Cell cycle scoring
+
+```{r}
+# Normalization to account for differences in sequencing depth
+cells_singlets_phase <- NormalizeData(cells_singlets)
+```
+
+-   Cell cycle effects on clustering are assessed by calculating the S phase and G2/M phase scores using zebrafish cell cycle marker genes derived from the Harvard Chan School (Bioinformatics Core) github repository: <https://github.com/hbc/tinyatlas/blob/master/cell_cycle/Danio_rerio.csv>
+
+```{r}
+# Load cell cycle marker table. Cell cycle gene list derived from https://github.com/hbc/tinyatlas/blob/master/cell_cycle/Danio_rerio.csv
+ccgenes <- read.csv(file = "Resources/DanioRerio_CellCycle.csv")
+
+# Create AnnotationHub
+ah <- AnnotationHub()
+
+# Access the Ensembl database for Danio Rerio
+ahDb <- query(ah,pattern = c("Danio rerio", "EnsDb"),ignore.case = TRUE)
+
+# Zebrafish 10.91  has  Ensembl  ID "AH60762"
+id <- "AH60762"
+
+# Load data
+edb <- ah[[id]]
+
+#Extract the gene-level information from the database:
+annotations <- genes(edb, return.type = "data.frame")
+annotations <- annotations %>% dplyr::select(gene_id, gene_name, seq_name, gene_biotype, description)
+
+# Connect EnsemblIDs to gene info
+ccmarkers <- dplyr::left_join(ccgenes, annotations, by = c("geneID" = "gene_id"))
+
+# Get gene names of the S phase markers
+s_markers <- ccmarkers %>% dplyr::filter(phase == "S") %>% pull("gene_name")
+s_markers
+
+# Get gene names of the G2M phase markers
+g2m_markers <- ccmarkers %>% dplyr::filter(phase == "G2/M") %>% pull("gene_name")
+g2m_markers
+```
+
+-   Cell cycle scoring
+
+```{r}
+# Calculate S phase and G2/M phase scores for each cell
+cells_singlets_phase <- CellCycleScoring(cells_singlets_phase, g2m.features = g2m_markers, s.features = s_markers)
+
+# Identify the most variable genes
+cells_singlets_phase <- FindVariableFeatures(cells_singlets_phase, selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+
+# Scale the counts
+cells_singlets_phase <- ScaleData(cells_singlets_phase)
+
+# Perform PCA
+cells_singlets_phase <- RunPCA(cells_singlets_phase)
+
+
+# Plot the PCA, colored by cell cycle phase
+DimPlot(cells_singlets_phase, reduction = "pca", split.by = "Phase", group.by = "Phase", pt.size = 1)
+DimPlot(cells_singlets_phase, reduction = "pca", group.by = "Phase" ,pt.size = 1)
+```
+
+## 4.2 Normalization and scTransform
+
+-   Final normalization is performed on the main Seurat object using SCTransform.
+-   Cell cycle scores are included as regression variables during SCTransform to reduce variation associated with cell cycle state. Although the dataset is expected to mainly consist of differentiated neurons, a small contribution of proliferating progenitor-like cells cannot be excluded.
+-   The cell cycle scores were used as regression variables during SCTransform. Although we expect our dataset consists of mainly differentiated neurons we cannot exclude a small contribution of progenitor cells.
+
+```{r}
+# Normalization, calculation of cell cycle scores and regressing out cell cycle variation during SCTransform
+normalized_cells <- cells_singlets %>% NormalizeData(verbose = TRUE) %>%
+CellCycleScoring(g2m.features = g2m_markers, s.features = s_markers) %>%
+SCTransform(vars.to.regress = c("S.Score", "G2M.Score"))
+```
+
+# 5. Standard Workflow and Clustering
+
+```{r}
+normalized_cells <- FindVariableFeatures(normalized_cells, selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+normalized_cells <- ScaleData(normalized_cells)
+normalized_cells <- RunPCA(normalized_cells)
+normalized_cells <- RunUMAP(normalized_cells, dims = 1:20, reduction = "pca", seed.use = 42L)
+normalized_cells <- FindNeighbors(object = normalized_cells,
+dims = 1:20)
+normalized_cells <- FindClusters(object = normalized_cells, resolution = 1.0)
+DimPlot(normalized_cells, label = T) + NoLegend()
+Idents(object = normalized_cells) <- "SCT_snn_res.1"
+```
+
+# 6. Annotation
+
+-   Prior to annotation we performed DEG analysis (not included in this script) to identify cluster-specific genes. Using these results together with knowledge from previously published data we assigned the cluster identities.
+
+-   We used different visualizations for gene expression of such marker genes to evaluate the identities of our clusters.
+
+-   After annotation we repeated DEG analysis (see section 7) to acquire the data Table S1B is based on.
+
+## 6.1 Hypothalamic DA Clusters
+
+-   Hypothalamic DA cells are characterized express th2, sox2, bsx, nkx2.1, nkx2.4b, prox1a (Filippi et al., 2010, 2012)\
+    (10.1002/cne.22213 + 10.1016/j.ydbio.2012.06.010)
+
+-   Based on the expression of these markers clusters 1, 11, and likely 12 were annotated as hypothalamic DA populations.
+
+-   Label: cl1 = Hyp1, cl2 = Hyp2, cl3 = Hyp3
+
+```{r}
+FeaturePlot(normalized_cells, "th2", label = T)
+DotPlot(normalized_cells, features = c("nkx2.1", "nkx2.4b", "dlx5a", "pou3f1", "bsx", "sox2", "prox1a", "hmx3a"))
+```
+
+## 6.2 Amacrine DA clusters
+
+-   Amacrine DA cells are described to express nr4a2b, nr4a2a, meis2a and tbx3a (Filippi et al., 2012; 10.1016/j.ydbio.2012.06.010)
+
+-   Due to the expression of these markers by cluster 5, 17, 22 were annotated as amacrine cell clusters
+
+-   Label: cl5 = Ama1, cl17 = Ama2, cl22 = Ama3
+
+```{r}
+FeaturePlot(normalized_cells, "tbx3a",label=T)
+DotPlot(normalized_cells, features = c("nr4a2b", "nr4a2a", "meis2a", "tbx3a", "pax6b"))
+```
+
+## 6.3 Pretectal DA clusters
+
+-   Pretectal cells express gata3, zic1, emx2, otx1b, nr4a2a, otx2, zic2a (Filippi et al., 2012; 10.1016/j.ydbio.2012.06.010)
+
+-   Based on the expression of these genes cluster 13 likely contains pretectal cells
+
+-   Label: cl13=PrT
+
+```{r}
+FeaturePlot(normalized_cells, "gata3")
+DotPlot(normalized_cells, features = c("gata3", "zic1", "emx2","otx1b", "nr4a2a", "otx2","zic2a"))
+```
+
+## 6.4 PTub clusters (otp positive groups)
+
+-   otp DA clusters express otpa, otpb, sim1b, lhx1a , lhx1b, lhx5, nkx2.4b, nkx.2.1 (Filippi et al., 2012; 10.1016/j.ydbio.2012.06.010)
+
+-   Based on the expression of these genes cluster 10 consists of otp positive pTub DA neurons
+
+-   Label: cl10 = PTub
+
+```{r}
+FeaturePlot(normalized_cells, c("otpa"), label = T)
+DotPlot(normalized_cells, features = c("otpa", "otpb", "sim1b", "lhx1a", "lhx5", "nkx2.4b", "nkx.2.1"))
+```
+
+## 6.5 NA Hindbrain
+
+-   The NO MO / AP cells express dbh, tfap2a, tfap2b, lmx1bb, meis2a and are glutamatergic (Filippi et al., 2012; 10.1016/j.ydbio.2012.06.010)
+
+-   Based on the expression of these markers cluster 3 and 9 are probably NA Hindbrain clusters.
+
+-   Label: cl3 = Hb1, cl9 = Hb2
+
+```{r}
+FeaturePlot(normalized_cells, "dbh", label = T)
+DotPlot(normalized_cells, features = c("dbh", "onecut1", "tfap2a", "lmx1bb", "meis2a", "slc17a6b"))
+```
+
+## 6.6 Sympathetic / Peripheral NA clusters
+
+-   Markers to annotate sympathetic and or peripheral neurons are dbh, hand2, prph (Lucas et al., 2006; 10.1242/dev.02574)
+-   neuroepithelial cells of the gill express rgs5a, tph1a, sv2a, ndufa4l2a (Pan et al., 2022; 10.1038/s41598-022-13693-1)
+-   Thus, cluster 14 might represent peripheral neurons and cluster 19 neuroepithelial cells
+-   Label: cl14 = PN, cl19 = NEC
+
+```{r}
+FeaturePlot(normalized_cells, "hand2", label = T)
+FeaturePlot(normalized_cells, "rgs5a", label = T)
+DotPlot(normalized_cells, features = c("dbh","hand2", "prph", "rgs5a", "tph1a", "ndufa4l2a"))
+```
+
+## 6.7 OB DA cluster
+
+-   The olfactory bulb DA cells should express arx, dlx2a, dlx5a, etv1, pbx1a (Filippi et al., 2012; 10.1016/j.ydbio.2012.06.010)
+
+-   The olfactory bulb DA neurons also express sst7 (in the used genome annotation called sst3) (Armbruster et al., 2025; 10.1002/cne.70079)
+
+-   However, there is no cluster which expresses all of these markers. The DEG analysis showed that cluster 18 expresses synpr which we detected by our coexpression analysis to be expressed only in the OB DA cells and not in the EMeA at 5 dpf.
+
+-   Cluster 18 is thus likely composed of OB cells
+
+-   Label: Cl18 = OB
+
+```{r}
+FeaturePlot(normalized_cells, "synpr", label = T)
+DotPlot(normalized_cells, features = c("sst3", "synpr", "arxa","dlx2a", "dlx5a", "etv1", "pbx1a"))
+```
+
+## 6.8 ventral forebrain cluster (vFB/Prog1 + vFB/Prog2)
+
+-   Cluster 0 and 2 express several ventral forebrain markers e.g. dlx genes that however, could not be assigned to specific anatomical regions. Few cells in this clusters also express progenitor markers and hindbrain markers. We decided to annote them as vFb/Prog1 and vFb/Prog2.
+
+-   We will try to dissect further identities in these clusters using an integrative approach in Script 5+6.
+
+-   Label cl0 = vFb/Prog1, cl2 = vFb/Prog2
+
+```{r}
+FeaturePlot(normalized_cells, "dlx2a", label = T)
+DotPlot(normalized_cells, features = c("dlx2a", "dlx5a", "dlx1a"))
+VlnPlot(normalized_cells, features = c("her12", "her6", "her9", "neurod1"))
+VlnPlot(normalized_cells, features = c("hoxb3a", "hoxb5b", "hoxc6b"))
+```
+
+## 6.9 Hindbrain cluster with low / undetected dbh levels
+
+-   Cluster 16 shows signatures for hindbrain cells, but lacks the expression of dbh. Genes upregulated are e.g. pou4f1, hoxb2a, hoxb3a
+
+-   Thus cluster 16 might be another hindbrain cluster with low / absent dbh expression.
+
+-   Label cl16 = Hb3
+
+```{r}
+FeaturePlot(normalized_cells, "pou4f1", label = T)
+DotPlot(normalized_cells, features = c("dbh", "pou4f1","hoxb2a", "hoxb3a"))
+```
+
+## 6.10 Motor nucleus of the vagus nerve (DMX)
+
+-   In mouse whole brain scRNAseq data a subclass of cells in the dorsal motor nucleus of the vagus nerve (DMX) shows expression of Chat and Tbx20 (10.1038/s41586-023-06812-z)
+
+-   In zebrafish the DMX should be isl1 positive as this gene is required for motor neuron differenitation. (Ericson et al., 1992, 10.1126/science.1350865; Higashijima et al., 2000, 10.1523/JNEUROSCI.20-01-00206.2000)
+
+-   Cluster 21 expresses tbx20, chata and isl1 and might represents such DMX neurons
+
+-   Label: Cl21 = DMX
+
+```{r}
+FeaturePlot(normalized_cells, "tbx20", label = T)
+DotPlot(normalized_cells, features = c("tbx20", "chata","isl1"))
+```
+
+## 6.11 Cerebellar cells
+
+-   Cluster 20 shows upregulation of genes associated with cerebellar cells such as en1, en2, etv1, neurod1 and nfia (Schüller et al., 2006; 10.1016/j.mcn.2006.07.010)
+-   Previously, th-positive cells in the rostral hindbrain have been desribed to be marked by the thm1512Tg(2A−QF2); Tg(QUASr:GFP)c403 reporter line used in this study (Altbürger et al., 10.3389/fnana.2023.1196868)
+-   Thus cluster 20 was annotated as cerebellar cells.
+-   Label: cl20 = Cb
+
+```{r}
+FeaturePlot(normalized_cells, "en1a", label = T)
+DotPlot(normalized_cells, features = c("en1b", "en2a", "etv1", "neurod1", "nfia"))
+```
+
+## 6.12 Retinal cells
+
+-   Cluster 4,6,7,8 show strong expression of tulp1a which is known to be expressed by retinal photoreceptor cells in zebrafish (Liu et al., 2022; 10.1371/journal.pgen.1009841)
+
+-   As these clusters neither express CA nor neural markers we suggest that we potentially also co-enriched retinal photoreceptor cells. The low-level EGFP expression in these cells might derive from EGFP ambient RNA induced during library preparation.
+
+-   Cluster 4,6,7,8 were labelled as retinal photoreceptor cells
+
+-   Label: cl4 = Ret1, cl6 = Ret2, cl7 = Re3, cl8 = Re4
+
+```{r}
+FeaturePlot(normalized_cells, "tulp1a", label = T)
+DotPlot(normalized_cells, features = c("tulp1a", "elavl3", "elavl4", "th", "dbh"))
+```
+
+## 6.13 Endothelial
+
+-   Cluster 13 expressed markers like collagens and keratins and probaly represent endothelial cells
+-   Label cl13 = Endo
+
+```{r}
+FeaturePlot(normalized_cells, "krt18", label = T)
+DotPlot(normalized_cells, features = c("krt18", "col4a2", "col5a1", "col2a1a"))
+```
+
+## 6.14 Annotate clusters
+
+-   Cluster identities were assigned based on marker gene expression analysis above.
+
+```{r}
+Idents(object = normalized_cells) <- "SCT_snn_res.1"
+
+normalized_cells <- RenameIdents(normalized_cells, 
+                                 "0" = "vFb/Prog1",
+                                 "1" = "Hyp1",
+                                 "2" = "vFb/Prog2",
+                                 "3" = "Hb1",
+                                 "4" = "Ret1",
+                                 "5" = "Ama1",
+                                 "6" = "Ret2",
+                                 "7" = "Ret3",
+                                 "8" = "Ret4",
+                                 "9" = "Hb2",
+                                 "10" = "pTub",
+                                 "11" = "Hyp2",
+                                 "12" = "Hyp3",
+                                 "13" = "PrT",
+                                 "14" = "PN",
+                                 "15" = "Endo",
+                                 "16" = "Hb3",
+                                 "17" = "Ama2",
+                                 "18" = "OB",
+                                 "19" = "NEC",
+                                 "20" = "Cb",
+                                 "21" = "DMX",
+                                 "22" = "Ama3"
+                                 )
+
+
+normalized_cells$Fig1_annotation <- normalized_cells@active.ident
+
+DimPlot(normalized_cells, label = T)
+
+```
+
+# 7. DEG Analysis of annotated object
+
+-   To identify cluster-specific genes DEG analysis was performed on the annotated Seurat object. Only positively enriched genes expressed in at least 20% of cells with a log2FC of at least 0.25 and a adjusted p-value \< 0.05 were considered as cluster specific.
+
+```{r}
+# Calculate DEGs and generate dataframes for all DEGs and TF DEGs (SCT assay, data slot)
+norm_markers <- FindAllMarkers(normalized_cells, only.pos = TRUE, min.pct = 0.2, logfc.threshold = .25)
+
+# Only include DEGs with adjusted p-value < 0.05
+try(norm_markers <- dplyr::filter(norm_markers, p_val_adj <= 0.05))
+
+# Sort by avg_log2FC
+norm_markers_sorted <- norm_markers %>% group_by(cluster) %>% dplyr::arrange(desc(avg_log2FC), .by_group = T)
+
+
+# Gene as first column
+norm_markers_sorted <- norm_markers_sorted %>% relocate(gene, .before = p_val) %>% relocate(cluster, .before = gene)
+
+# Load zebrafish transcription factor annotation list used to extract transcription factors from DEG results ( List from Animal Transcription Factor Database 3.0 (AnimalTFDB3.9))
+TFlist <- read_tsv(file = "Resources/DanioRerio_TF.tsv")
+
+# Rename gene symbol column and remove unnecessary annotation columns
+names(TFlist)[names(TFlist) == "Symbol"] <- "gene"
+TFlist$Species <- NULL
+TFlist$Ensembl <- NULL
+TFlist$Family <- NULL
+TFlist$Protein <- NULL
+TFlist$`Entrez ID` <- NULL 
+
+# Remove duplicated transcription factor entries
+TFlist <- TFlist[!duplicated(TFlist), ]
+
+# Extract transcription factor genes
+TF_markers <- inner_join(norm_markers, TFlist, by = "gene")
+
+# Sort by avg_log2FC
+TF_markers_sorted <- TF_markers %>% group_by(cluster) %>% dplyr::arrange(desc(avg_log2FC), .by_group = T)
+TF_markers_sorted <- TF_markers_sorted %>% relocate(gene, .before = p_val) %>% relocate(cluster, .before = gene)
+
+
+###################################################################################
+# Get count info of DEGs for all clusters
+
+# ALL GENES:
+#Get sum of norm counts within cluster
+norm_markers_sumcounts_per_cluster <- AggregateExpression(
+  normalized_cells,
+  assays   = "RNA",
+  slot     = "data",
+  features = norm_markers$gene,
+  group.by = "Fig1_annotation",
+  verbose  = FALSE
+)
+# Get avg of norm counts within cluster
+norm_markers_avgcounts_per_cluster <- AverageExpression(
+  normalized_cells,
+  assays   = "RNA",
+  slot     = "data",
+  features = norm_markers$gene,
+  group.by = "Fig1_annotation",
+  verbose  = FALSE
+)
+
+# Generate combined dataframes for the counts
+norm_markers_sumcounts_per_cluster <- as.data.frame(norm_markers_sumcounts_per_cluster)
+colnames(norm_markers_sumcounts_per_cluster) <- paste(colnames(norm_markers_sumcounts_per_cluster), "_sum_normcount", sep="")
+norm_markers_avgcounts_per_cluster <- as.data.frame(norm_markers_avgcounts_per_cluster)
+colnames(norm_markers_avgcounts_per_cluster) <- paste(colnames(norm_markers_avgcounts_per_cluster), "_avg_normcount", sep="")
+norm_markers_counts_per_cluster <- cbind(norm_markers_sumcounts_per_cluster, norm_markers_avgcounts_per_cluster) 
+norm_markers_counts_per_cluster <- norm_markers_counts_per_cluster[, order(colnames(norm_markers_counts_per_cluster))]
+
+# TRANSCRIPTION FACTORS:
+#Get sum of normcounts within cluster
+TF_markers_sumcounts_per_cluster <- AggregateExpression(
+  normalized_cells,
+  assays   = "RNA",
+  slot     = "data",
+  features = TF_markers$gene,
+  group.by = "Fig1_annotation",
+  verbose  = FALSE
+)
+# Get avg of normcounts within cluster
+TF_markers_avgcounts_per_cluster <- AverageExpression(
+  normalized_cells,
+  assays   = "RNA",
+  slot     = "data",
+  features = TF_markers$gene,
+  group.by = "Fig1_annotation",
+  verbose  = FALSE
+)
+
+# Generate combined df for the count
+TF_markers_sumcounts_per_cluster <- as.data.frame(TF_markers_sumcounts_per_cluster)
+colnames(TF_markers_sumcounts_per_cluster) <- paste(colnames(TF_markers_sumcounts_per_cluster), "_sum_normcount", sep="")
+TF_markers_avgcounts_per_cluster <- as.data.frame(TF_markers_avgcounts_per_cluster)
+colnames(TF_markers_avgcounts_per_cluster) <- paste(colnames(TF_markers_avgcounts_per_cluster), "_avg_normcount", sep="")
+TF_markers_counts_per_cluster <- cbind(TF_markers_sumcounts_per_cluster, TF_markers_avgcounts_per_cluster) 
+TF_markers_counts_per_cluster <- TF_markers_counts_per_cluster[, order(colnames(TF_markers_counts_per_cluster))]
+
+
+
+##########################################################################
+# Cell number per cluster
+n_cells <- FetchData(normalized_cells, 
+                     vars = c("ident", "orig.ident")) %>% dplyr::count(ident, orig.ident) %>% tidyr::spread(ident,n)
+
+n_cells <- as.data.frame(t(n_cells))
+n_cells<- n_cells %>% dplyr::filter(row_number() != 1)
+colnames(n_cells) <- "CellNumber"
+n_cells$CellNumber <- as.numeric(n_cells$CellNumber)
+n_cells
+
+
+# Prepare associated data for export
+dataframe_names <- list("CellNumbers" = n_cells, "All_DEGs" = norm_markers_sorted, "TF_DEGs" = TF_markers_sorted, "All_DEGs_CountInformation" = norm_markers_counts_per_cluster, "TF_DEGs_CountInformation" = TF_markers_counts_per_cluster)
+
+
+# Export DEG results, expression information and cluster cell numbers. 
+openxlsx::write.xlsx(dataframe_names, file = "DEG_tables/Script3_OwnData/Script3_OwnDataset_DEG_Info.xlsx", rowNames=T)
+
+```
+
+# 8. Save / Read annotated dataset
+
+```{r}
+saveRDS(normalized_cells, "RDS_files/Script3_Armbruster2026_annotated.rds")
+
+normalized_cells <-readRDS("RDS_files/Script3_Armbruster2026_annotated.rds")
+```
+
+# 9. For figure 1 (or associated supplements)
+
+## 9.1 UMAP Plot
+
+```{r}
+# Generate UMAP visualization of annotated clusters for Figure 1C
+UMAP_Fig1_annotation <- DimPlot(normalized_cells, pt.size = 0.5, group.by = "Fig1_annotation", label = T, repel = T) + 
+  NoLegend() +
+  labs(x = "UMAP 1", y = "UMAP 2") + 
+    theme(
+        plot.title = element_text(size = 16, face = "bold")) 
+
+UMAP_Fig1_annotation
+
+ggsave("Scritp3_Fig1_OwnData_DimPlot_.svg", plot = UMAP_Fig1_annotation, path = "Figures/Figure1_GeneralDataset", width = 5, height = 4)
+```
+
+## 9.2 Feature plots for neurotransmitter markers
+
+```{r}
+# Generate UMAP  plots showing expression (SCTransform normalized data slot) of neurotransmitter markers and additional genes used in Figure 1D and Figure S2A-D
+genes <- c("th", "slc6a2", "slc18a2", "ddc", "dbh", "slc6a3", "th2", "slc17a6a", "slc17a6b", "slc17a7a", "gad1a", "gad1b", "gad2", "tulp1a", "krt18")
+
+for (gene in genes) {
+  plot <- FeaturePlot(normalized_cells, gene, pt.size = 2, order = T) + 
+    scale_colour_gradient(low="lightgrey", high="#cd2626") +
+    labs(x = "UMAP 1", y = "UMAP 2", title = NULL) +     
+    guides(color = guide_colorbar(barwidth = 0.5, barheight = 10))
+    plot_name <- paste("Script3_Fig1_OwnData_CA-markers_Plots_", gene, "_reds.svg")
+    print(gene)
+    print(plot) 
+    ggsave(plot_name, plot = plot, path = "Figures/Figure1_GeneralDataset/",
+           width = 5, height = 4)
+}
+```
+
+# 10. For figure 6
+
+-   We assessed the potential of the CA clusters to produce or receive specific neurotransmitter and neuropeptide types based on their expression of marker genes assosiated with the synthesis/release of neurotransmitter, genes encoding neuropeptides or genes encoding receptors for the resprective signaling types.
+
+-   Marker lists used can be also found in Table S6b and Table S6I. The neurotransmitter marker genes derive from a previously published list compiled by Martin and colleagues and were extended by NA synthesis and release markers as well as NA receptor encoding genes (Martin et al., 2022; DOI: 10.3389/fnmol.2022.818007). The assessed neuropeptides were selected based on entries in the HGNC database (<https://www.genenames.org/data/genegroup/#!/group/1902>, February 2025) and the homologs of the respective neuropeptide encoding genes were manually compiled for zebrafish
+
+-   The plot generated in this code is part of Figure 6A and B. The exported xlsx files are the basis of Table S6C-E and Table S6J-L.
+
+## 10.1 Neurotransmitter Analysis
+
+```{r}
+seurat_object_to_analyse <- normalized_cells
+
+# Use raw RNA counts for binary expression assignment of marker genes
+DefaultAssay(seurat_object_to_analyse) <- "RNA"
+
+# Minimum number of expressed marker genes required for assignment to a specific signaling type
+expression_threshold <- 0
+
+# Extract annotated cell clusters
+cell_clusters <- as.data.frame(seurat_object_to_analyse$Fig1_annotation)
+
+
+# Load t he neurotransmitter/neuropeptide marker gene lists that contain the genes associated with transmitter production and reception
+gene_lists <- read.csv(file = "Resources/neurotransmitter_marker.csv", sep=";", skipNul = T, check.names = F)
+
+# Get the raw count expression matrix from RNA assay
+expr_matrix <- GetAssayData(seurat_object_to_analyse, assay = "RNA", slot = "count")
+
+# Select marker genes present in the dataset and extract their expression values
+all_marker_genes <- unname(unlist(gene_lists))
+all_marker_genes <- all_marker_genes[all_marker_genes != ""]
+valid_genes <- intersect(all_marker_genes, rownames(expr_matrix))
+expr_matrix_relevant_genes <- expr_matrix[valid_genes, ]
+expr_matrix_relevant_genes_cells <- t(as.data.frame(expr_matrix_relevant_genes))
+
+# Calculate the average normalized expression for the marker genes per cluster for data export later
+expr_matrix_relevant_genes_clusters <- AverageExpression(
+  seurat_object_to_analyse,
+  assays   = "RNA",
+  slot     = "data",
+  features = valid_genes,
+  group.by = "Fig1_annotation",
+  verbose  = FALSE
+)
+
+expr_matrix_relevant_genes_clusters <- as.data.frame(expr_matrix_relevant_genes_clusters)
+
+expr_matrix_relevant_genes_clusters <- expr_matrix_relevant_genes_clusters[match(valid_genes, rownames(expr_matrix_relevant_genes_clusters)), , drop = FALSE]
+
+expr_matrix_relevant_genes_clusters <- t(expr_matrix_relevant_genes_clusters)
+
+################################################################################
+# Assigning neurotransmitter/neuropeptide production and reception states
+# For each signaling type cells are classified as as producing  or receiving based on expression of at least one marker gene.
+################################################################################
+
+# Define neurotransmitters/neuropeptide groups
+all_neurotransmitters <- unique(sub("_out$|_in$", "", colnames(gene_lists)))
+
+# Initialize empty matrices for assigning binary values for production and reception
+production_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+reception_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+
+# Set cell names as row names for both matrices
+rownames(production_matrix) <- colnames(expr_matrix)
+rownames(reception_matrix) <- colnames(expr_matrix)
+
+# Set neurotransmitters as column names
+colnames(production_matrix) <- all_neurotransmitters
+colnames(reception_matrix) <- all_neurotransmitters
+
+# Track processed neurotransmitters
+processed_neurotransmitters <- c()
+
+# Loop through neurotransmitter/neuropeptide groups and identify producing/receiving cells
+for (gene_group_name in all_neurotransmitters) {
+
+  # Identify production marker genes
+  production_column <- paste0(gene_group_name, "_out")
+  if (production_column %in% colnames(gene_lists)) {
+    production_markers <- gene_lists[[production_column]][gene_lists[[production_column]] %in% rownames(expr_matrix)]
+  } else {
+    production_markers <- NULL
+  }
+
+  # Identify reception marker genes
+  reception_column <- paste0(gene_group_name, "_in")
+  if (reception_column %in% colnames(gene_lists)) {
+    reception_markers <- gene_lists[[reception_column]][gene_lists[[reception_column]] %in% rownames(expr_matrix)]
+  } else {
+    reception_markers <- NULL
+  }
+
+  # Assign cells expressing production or reception markers
+  if (!is.null(production_markers) && length(production_markers) > expression_threshold) {
+    production_cells <- colSums(expr_matrix[production_markers, , drop = FALSE] > 0) > 0
+  } else {
+    production_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  
+  if (!is.null(reception_markers) && length(reception_markers) > 0) {
+    reception_cells <- colSums(expr_matrix[reception_markers, , drop = FALSE] > expression_threshold) > 0
+  } else {
+    reception_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  # Identify dbh_cells
+  dbh_cells <- expr_matrix["dbh", ] > expression_threshold
+  
+  # Separate DA and NA cells based on dbh expression to avoid assigning NA cells as DA due to shared markers
+  if (gene_group_name == "dopa") {
+    production_cells <- production_cells & !dbh_cells
+    } else if (gene_group_name == "nora") {
+      dbh_cells <- expr_matrix["dbh", ] > expression_threshold
+      production_cells <- dbh_cells & production_cells
+      }
+
+  # Store assignments in matrices and Seurat metadata
+  production_matrix[, gene_group_name] <- as.numeric(production_cells)
+  reception_matrix[, gene_group_name] <- as.numeric(reception_cells)
+
+  seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- as.numeric(production_cells)
+  seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- as.numeric(reception_cells)
+
+  # Mark this neurotransmitter as processed
+  processed_neurotransmitters <- c(processed_neurotransmitters, gene_group_name)
+}
+
+# Ensure all neurotransmitters are included in metadata, even if missing markers
+for (gene_group_name in all_neurotransmitters) {
+  if (!(gene_group_name %in% processed_neurotransmitters)) {
+    seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- 0
+    seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- 0
+    production_matrix[, gene_group_name] <- 0
+    reception_matrix[, gene_group_name] <- 0
+  }
+}
+
+###################################################################################
+# Calculate fraction of cells per cluster expressing neurotransmitter markers
+###################################################################################
+
+# Threshold for visualization: only show transmitter/receptor groups that are expressed in at least 10% of cells in one cluster
+threshold <- 0.1
+
+# Get cluster identities from your Seurat object to include in the plot
+clusters <- c("Hyp1","Hb1", "Ama1", "Hb2", "pTub", "Hyp2", "Hyp3", "PrT", "PN", "Hb3", "Ama2", "NEC","Cb", "DMX","Ama3")
+clusters <- str_sort(clusters, decreasing = T)
+
+# Initialize matrix to store the fraction of cells assigned to each neurotransmitter production and reception category per cluster
+genegroup_Fraction_matrix <- matrix(0, nrow = length(clusters), ncol = length(colnames(gene_lists)))
+rownames(genegroup_Fraction_matrix) <- clusters
+
+# Rename columns to include both 'production' and 'reception' labels for each neurotransmitter
+col_names <- colnames(gene_lists)
+col_names <- str_replace(col_names, "_out", "_production")
+col_names <- str_replace(col_names, "_in", "_reception")
+colnames(genegroup_Fraction_matrix) <- col_names
+
+# Loop to calculate the fraction of producing and receiving cells for each neurotransmitter within every annotated cluster
+for (cluster in clusters) {
+  # Select cells belonging to the current calculated cluster
+  cluster_cells <- WhichCells(seurat_object_to_analyse, idents = cluster)
+  
+  for (name in colnames(gene_lists)) {
+    # Strip the "_out" for production and "_in" for reception when accessing metadata
+    name <- sub("_out$|_in$", "", name)
+    
+    # Define metadata column names for production and reception
+    production_colname <- paste0(name, "_production")
+    reception_colname <- paste0(name, "_reception")
+
+    # Try to extract production data, otherwise return a vector of zeros
+    production_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, production_colname], silent = TRUE)
+    if (inherits(production_cells, "try-error")) {
+      production_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Try to extract reception data, otherwise return a vector of zeros
+    reception_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, reception_colname], silent = TRUE)
+    if (inherits(reception_cells, "try-error")) {
+      reception_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Calculate fraction of producing and receiving cells
+    production_Fraction <- sum(production_cells) / length(cluster_cells)
+    reception_Fraction <- sum(reception_cells) / length(cluster_cells)
+
+    # Store calculated fractions
+    try(genegroup_Fraction_matrix[cluster, paste(name, "production", sep = "_")] <- production_Fraction, silent = TRUE)
+    try(genegroup_Fraction_matrix[cluster, paste(name, "reception", sep = "_")] <- reception_Fraction, silent = TRUE)
+  }
+}
+
+
+###################################################################################
+# Visualization and data export
+###################################################################################
+
+# Reshape the matrix for ggplot2
+Fraction_df <- reshape2::melt(genegroup_Fraction_matrix)
+
+# Change Fraction df colnames
+colnames(Fraction_df) <- c("Cluster", "Neurotransmitter_Type", "Fraction")
+
+# Identify neurotransmitter types where any cluster exceeds the threshold
+valid_types <- Fraction_df %>%
+  group_by(Neurotransmitter_Type) %>%
+  dplyr::filter(any(Fraction >= threshold)) %>%
+  pull(Neurotransmitter_Type) %>%
+  unique()
+
+# "Manual" override to include the signaling types in the plots that came up in either the analysis of the clusters of Figure 1c or 1e
+# Neurotransmitter
+valid_types <- list(
+  "5-HT_production",
+  "5-HT_reception",
+  "chol_production",
+  "chol_reception",
+  "dopa_production",
+  "dopa-d1like_reception",
+  "dopa-d2like_reception",
+  "gaba_production",
+  "gaba_reception",
+  "glut_production",
+  "glut_reception",
+  "glycin_reception",
+  "hist_reception",
+  "nora_production",
+  "nora_reception"
+  )
+
+# All transmitter/peptide Fractions per cluster 
+Fraction_df_all <- Fraction_df
+
+# Filter data: for visualization Keep all clusters for these neurotransmitters
+Fraction_df <- Fraction_df %>%
+  dplyr::filter(Neurotransmitter_Type %in% valid_types)
+
+
+
+plot <- ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+  geom_tile(color = "black") +
+          scale_fill_gradientn(
+             colours = c("grey90","#fee0d2","#fb6a4a","#cb181d"),
+            trans = "sqrt",
+            limits = c(0, 0.75),#
+            oob = scales::squish) +
+          labs(title = NULL, x = NULL, y = NULL, fill = "Fraction of cells") +
+          theme_minimal(base_size = 14) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12),  
+                axis.text.y = element_text(size = 12, face = "bold",),
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+                legend.position = "right",
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank()) +
+                coord_fixed() +
+                geom_tile(color = "grey40", linewidth = 0.25)+
+                NoLegend()
+
+ggsave("Script3_Fig6_Zebrafish_Own_Neurotransmitter_Sqrt.svg", plot = plot, path = "Figures/Figure6_TransmitterPeptideCodes/", width = 16, height = 8, bg = "white")
+
+# Generate and save legend
+legend_plot <- cowplot::ggdraw(get_legend(ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+    geom_tile() +
+    scale_fill_gradientn(
+    colours = c("grey90", "#fee0d2", "#fb6a4a", "#cb181d")) +
+    theme_minimal() +
+    theme(legend.position = "right")))
+
+ggsave("Figures/Figure6_TransmitterPeptideCodes/Script3_Fig6_Zebrafish_Own_Neurotransmitter_Sqrt_Legend.svg", plot = legend_plot, bg = "white")
+
+print(plot)
+print(legend_plot)
+
+# Save numerical data of the analysis
+dataset_names <- list("used_markers_genes" = gene_lists, "raw_counts_cells" = expr_matrix_relevant_genes_cells, "assigned_clusters" = cell_clusters, "avg_norm_counts_cluster" = expr_matrix_relevant_genes_clusters, "fraction_per_cluster" = Fraction_df_all )
+openxlsx::write.xlsx(dataset_names, file = "Figures/Figure6_TransmitterPeptideCodes/Script3_Fig6_Zebrafish_Own_Neurotransmitter_Analyis.xlsx", rowNames = TRUE)
+```
+
+## 10.2 Neuropeptide Analysis
+
+```{r}
+seurat_object_to_analyse <- normalized_cells
+
+# Use raw RNA counts for binary expression assignment of marker genes
+DefaultAssay(seurat_object_to_analyse) <- "RNA"
+
+# Minimum number of expressed marker genes required for assignment to a specific signaling type
+expression_threshold <- 0
+
+# Extract annotated cell clusters
+cell_clusters <- as.data.frame(seurat_object_to_analyse$Fig1_annotation)
+
+
+# Load t he neurotransmitter/neuropeptide marker gene lists that contain the genes associated with transmitter production and reception
+gene_lists <- read.csv(file = "Resources/neuropeptides_marker.csv", sep=";", skipNul = T, check.names = F)
+
+# Get the raw count expression matrix from RNA assay
+expr_matrix <- GetAssayData(seurat_object_to_analyse, assay = "RNA", slot = "count")
+
+# Select marker genes present in the dataset and extract their expression values
+all_marker_genes <- unname(unlist(gene_lists))
+all_marker_genes <- all_marker_genes[all_marker_genes != ""]
+valid_genes <- intersect(all_marker_genes, rownames(expr_matrix))
+expr_matrix_relevant_genes <- expr_matrix[valid_genes, ]
+expr_matrix_relevant_genes_cells <- t(as.data.frame(expr_matrix_relevant_genes))
+
+# Calculate the average normalized expression for the marker genes per cluster for data export later
+expr_matrix_relevant_genes_clusters <- AverageExpression(
+  seurat_object_to_analyse,
+  assays   = "RNA",
+  slot     = "data",
+  features = valid_genes,
+  group.by = "Fig1_annotation",
+  verbose  = FALSE
+)
+
+expr_matrix_relevant_genes_clusters <- as.data.frame(expr_matrix_relevant_genes_clusters)
+
+expr_matrix_relevant_genes_clusters <- expr_matrix_relevant_genes_clusters[match(valid_genes, rownames(expr_matrix_relevant_genes_clusters)), , drop = FALSE]
+
+expr_matrix_relevant_genes_clusters <- t(expr_matrix_relevant_genes_clusters)
+
+################################################################################
+# Assigning neurotransmitter/neuropeptide production and reception states
+# For each signaling type cells are classified as as producing  or receiving based on expression of at least one marker gene.
+################################################################################
+
+# Define neurotransmitters/neuropeptide groups
+all_neurotransmitters <- unique(sub("_out$|_in$", "", colnames(gene_lists)))
+
+# Initialize empty matrices for assigning binary values for production and reception
+production_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+reception_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+
+# Set cell names as row names for both matrices
+rownames(production_matrix) <- colnames(expr_matrix)
+rownames(reception_matrix) <- colnames(expr_matrix)
+
+# Set neurotransmitters as column names
+colnames(production_matrix) <- all_neurotransmitters
+colnames(reception_matrix) <- all_neurotransmitters
+
+# Track processed neurotransmitters
+processed_neurotransmitters <- c()
+
+# Loop through neurotransmitter/neuropeptide groups and identify producing/receiving cells
+for (gene_group_name in all_neurotransmitters) {
+
+  # Identify production marker genes
+  production_column <- paste0(gene_group_name, "_out")
+  if (production_column %in% colnames(gene_lists)) {
+    production_markers <- gene_lists[[production_column]][gene_lists[[production_column]] %in% rownames(expr_matrix)]
+  } else {
+    production_markers <- NULL
+  }
+
+  # Identify reception marker genes
+  reception_column <- paste0(gene_group_name, "_in")
+  if (reception_column %in% colnames(gene_lists)) {
+    reception_markers <- gene_lists[[reception_column]][gene_lists[[reception_column]] %in% rownames(expr_matrix)]
+  } else {
+    reception_markers <- NULL
+  }
+
+  # Assign cells expressing production or reception markers
+  if (!is.null(production_markers) && length(production_markers) > expression_threshold) {
+    production_cells <- colSums(expr_matrix[production_markers, , drop = FALSE] > 0) > 0
+  } else {
+    production_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  
+  if (!is.null(reception_markers) && length(reception_markers) > 0) {
+    reception_cells <- colSums(expr_matrix[reception_markers, , drop = FALSE] > expression_threshold) > 0
+  } else {
+    reception_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  # Identify dbh_cells
+  dbh_cells <- expr_matrix["dbh", ] > expression_threshold
+  
+  # Separate DA and NA cells based on dbh expression to avoid assigning NA cells as DA due to shared markers
+  if (gene_group_name == "dopa") {
+    production_cells <- production_cells & !dbh_cells
+    } else if (gene_group_name == "nora") {
+      dbh_cells <- expr_matrix["dbh", ] > expression_threshold
+      production_cells <- dbh_cells & production_cells
+      }
+
+  # Store assignments in matrices and Seurat metadata
+  production_matrix[, gene_group_name] <- as.numeric(production_cells)
+  reception_matrix[, gene_group_name] <- as.numeric(reception_cells)
+
+  seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- as.numeric(production_cells)
+  seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- as.numeric(reception_cells)
+
+  # Mark this neurotransmitter as processed
+  processed_neurotransmitters <- c(processed_neurotransmitters, gene_group_name)
+}
+
+# Ensure all neurotransmitters are included in metadata, even if missing markers
+for (gene_group_name in all_neurotransmitters) {
+  if (!(gene_group_name %in% processed_neurotransmitters)) {
+    seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- 0
+    seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- 0
+    production_matrix[, gene_group_name] <- 0
+    reception_matrix[, gene_group_name] <- 0
+  }
+}
+
+###################################################################################
+# Calculate fraction of cells per cluster expressing neurotransmitter markers
+###################################################################################
+
+# Threshold for visualization: only show transmitter/receptor groups that are expressed in at least 10% of cells in one cluster
+threshold <- 0.1
+
+# Get cluster identities from your Seurat object to include in the plot
+clusters <- c("Hyp1","Hb1", "Ama1", "Hb2", "pTub", "Hyp2", "Hyp3", "PrT", "PN", "Hb3", "Ama2", "NEC","Cb", "DMX","Ama3")
+clusters <- str_sort(clusters, decreasing = T)
+
+# Initialize matrix to store the fraction of cells assigned to each neurotransmitter production and reception category per cluster
+genegroup_Fraction_matrix <- matrix(0, nrow = length(clusters), ncol = length(colnames(gene_lists)))
+rownames(genegroup_Fraction_matrix) <- clusters
+
+# Rename columns to include both 'production' and 'reception' labels for each neurotransmitter
+col_names <- colnames(gene_lists)
+col_names <- str_replace(col_names, "_out", "_production")
+col_names <- str_replace(col_names, "_in", "_reception")
+colnames(genegroup_Fraction_matrix) <- col_names
+
+# Loop to calculate the fraction of producing and receiving cells for each neurotransmitter within every annotated cluster
+for (cluster in clusters) {
+  # Select cells belonging to the current calculated cluster
+  cluster_cells <- WhichCells(seurat_object_to_analyse, idents = cluster)
+  
+  for (name in colnames(gene_lists)) {
+    # Strip the "_out" for production and "_in" for reception when accessing metadata
+    name <- sub("_out$|_in$", "", name)
+    
+    # Define metadata column names for production and reception
+    production_colname <- paste0(name, "_production")
+    reception_colname <- paste0(name, "_reception")
+
+    # Try to extract production data, otherwise return a vector of zeros
+    production_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, production_colname], silent = TRUE)
+    if (inherits(production_cells, "try-error")) {
+      production_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Try to extract reception data, otherwise return a vector of zeros
+    reception_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, reception_colname], silent = TRUE)
+    if (inherits(reception_cells, "try-error")) {
+      reception_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Calculate fraction of producing and receiving cells
+    production_Fraction <- sum(production_cells) / length(cluster_cells)
+    reception_Fraction <- sum(reception_cells) / length(cluster_cells)
+
+    # Store calculated fractions
+    try(genegroup_Fraction_matrix[cluster, paste(name, "production", sep = "_")] <- production_Fraction, silent = TRUE)
+    try(genegroup_Fraction_matrix[cluster, paste(name, "reception", sep = "_")] <- reception_Fraction, silent = TRUE)
+  }
+}
+
+
+###################################################################################
+# Visualization and data export
+###################################################################################
+
+# Reshape the matrix for ggplot2
+Fraction_df <- reshape2::melt(genegroup_Fraction_matrix)
+
+# Change Fraction df colnames
+colnames(Fraction_df) <- c("Cluster", "Neurotransmitter_Type", "Fraction")
+
+
+
+# Identify neurotransmitter types where any cluster exceeds the threshold
+valid_types <- Fraction_df %>%
+  group_by(Neurotransmitter_Type) %>%
+  dplyr::filter(any(Fraction >= threshold)) %>%
+  pull(Neurotransmitter_Type) %>%
+  unique()
+
+# "Manual" override to include the signaling types in the plots that came up in either the analysis of the clusters of Figure 1c or 1e # Neuropeptides
+valid_types <- list(
+  "Adcyap_production",
+  "Adcyap_reception",
+  "Adm_reception",
+  "Agrp_reception",
+  "Apln_production",
+  "Calca_production",
+  "Calca_reception",
+  "Cb_reception",
+  "Ccka_production",
+  "Chga_production",
+  "Crh_reception",
+  "Galn_production",
+  "Galn_reception",
+  "Ghrh_production",
+  "Grp_production",
+  "Grp_reception",
+  "Igf_production",
+  "Igf_reception",
+  "Ins_reception",
+  "Kiss_reception",
+  "Lep_reception",
+  "Mln_reception",
+  "Nmb_production",
+  "Nmb_reception",
+  "Nmu_production",
+  "Npb_production",
+  "Npp_production",
+  "Npp_reception",
+  "Npy_production",
+  "Npy_reception",
+  "Nts_production",
+  "Nts_reception",
+  "Pdyn_production",
+  "Penk_production",
+  "Penk_reception",
+  "Pnoc_production",
+  "Pomc_production",
+  "Prl_production",
+  "Pyy_production",
+  "Sst_production",
+  "Sst_production ",
+  "Sst_reception",
+  "Trh_reception",
+  "Uts_production",
+  "Vip_reception"
+  )
+
+# All transmitter/peptide Fractions per cluster 
+Fraction_df_all <- Fraction_df
+
+# Filter data: for visualization Keep all clusters for these neurotransmitters
+Fraction_df <- Fraction_df %>%
+  dplyr::filter(Neurotransmitter_Type %in% valid_types)
+
+
+
+plot <- ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+  geom_tile(color = "black") +
+          scale_fill_gradientn(
+             colours = c("grey90","#fee0d2","#fb6a4a","#cb181d"),
+            trans = "sqrt",
+            limits = c(0, 0.75),#
+            oob = scales::squish) +
+          labs(title = NULL, x = NULL, y = NULL, fill = "Fraction of cells") +
+          theme_minimal(base_size = 14) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12),  
+                axis.text.y = element_text(size = 12, face = "bold",),
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+                legend.position = "right",
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank()) +
+                coord_fixed() +
+                geom_tile(color = "grey40", linewidth = 0.25)+
+                NoLegend()
+
+ggsave("Script3_Fig6_Zebrafish_Own_Neuropeptides_Sqrt.svg", plot = plot, path = "Figures/Figure6_TransmitterPeptideCodes/", width = 16, height = 8, bg = "white")
+
+#______________________________________
+# Generate and save legend
+#______________________________________
+legend_plot <- cowplot::ggdraw(get_legend(ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+    geom_tile() +
+    scale_fill_gradientn(
+    colours = c("grey90", "#fee0d2", "#fb6a4a", "#cb181d")) +
+    theme_minimal() +
+    theme(legend.position = "right")))
+
+#Save the legend
+ggsave("Figures/Figure6_TransmitterPeptideCodes/Script3_Fig6_Zebrafish_Own_Neuropeptides_Sqrt_Legend.svg", plot = legend_plot, bg = "white")
+
+
+print(plot)
+print(legend_plot)
+
+
+# Save numerical data of the analysis
+dataset_names <- list("used_markers_genes" = gene_lists, "raw_counts_cells" = expr_matrix_relevant_genes_cells, "assigned_clusters" = cell_clusters, "avg_norm_counts_cluster" = expr_matrix_relevant_genes_clusters, "fraction_per_cluster" = Fraction_df_all )
+
+
+
+openxlsx::write.xlsx(dataset_names, file = "Figures/Figure6_TransmitterPeptideCodes/Script3_Fig6_Zebrafish_Own_Neuropeptides_Analyis.xlsx", rowNames = TRUE)
+```
+
+# 11. Save raw count matrix as .csv file for GEO submission
+
+```{r}
+normalized_cells <-readRDS("RDS_files/Script3_Armbruster2026_annotated.rds")
+```
+
+```{r}
+# Extract count matrix
+normalized_cells_count_matrix <- GetAssayData(normalized_cells, assay = "RNA", slot = "counts")
+
+
+normalized_cells_count_matrix <- t(as.matrix(normalized_cells_count_matrix))
+
+# Add cluster names to cell names
+clusters <-unname(normalized_cells$Fig1_annotation)
+cellnames <- rownames(normalized_cells_count_matrix)
+cellnames_with_cluster <- paste(cellnames, clusters, sep = "_")
+rownames(normalized_cells_count_matrix) <- cellnames_with_cluster
+normalized_cells_count_matrix <- t(as.matrix(normalized_cells_count_matrix))
+
+# Save as .csv
+write.csv(normalized_cells_count_matrix, file = "rawcount_csv_of_Figure1c_clusters/Armbruster2026_raw_count_matrix.csv")
+
+```
+
+# 12. Average TF counts per cluster
+
+-   Get the average normalized expression from the RNA assay of all transcription factors expressed in the CA clusters.
+-   This is the basis of Table S1C.
+
+```{r, warning=FALSE}
+normalized_cells <- readRDS("RDS_files/Script3_Armbruster2026_annotated.rds")
+
+norm_avgcounts_per_cluster <- AverageExpression(
+  normalized_cells,
+  assays   = "RNA",
+  slot     = "data",
+  group.by = "Fig1_annotation",
+  verbose  = FALSE,
+  features = TFlist$gene
+
+)
+
+
+df_norm_avgcounts_per_cluster <- data.frame(norm_avgcounts_per_cluster)
+
+openxlsx::write.xlsx(df_norm_avgcounts_per_cluster, file = "other_data_tables/Script3_Figure1c_clusters_avgnormalizedTFcounts.xlsx", rowNames=T)
+```
+
+```{r}
+# Session info
+sessionInfo()
+```
+
+```{r}
+# Remove objects to reduce memory usage 
+rm(list=ls())
+gc()
+```

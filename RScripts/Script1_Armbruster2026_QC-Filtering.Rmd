@@ -1,0 +1,274 @@
+---
+title: "Script1_Armbruster2026_QC-Filtering"
+author: "Daniel Armbruster"
+date: "2026-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+- In this script we loaded the mapped 10X Genomics data, converted it into a Seurat object, performed quality control, and filtered the dataset to retain cells with at least 500 expressed genes per cell, less than 8% mitochondrial content per cell, and positive GFP expression.
+
+- The session info including the used packages and their versions is provided at the end of this script.
+
+
+# 1. Load Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(SingleCellExperiment)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+# 2 Load Data and Generate Seurat Object
+
+```{r}
+# Load mapped output files into a sparse count matrix
+allcells_sparse <- Read10X(data.dir = "Mapped_Data/")
+
+# Generate Seurat object with an initial filtering for cells expressing > 200 genes
+allcells <- CreateSeuratObject(allcells_sparse, min.features = 200)
+```
+
+# 3 Quality Control
+
+## 3.1 Prepare Metadata for QC
+
+
+```{r}
+# Calculate log10-transformed genes per UMI ratio
+allcells$log10GenesPerUMI <- log10(allcells$nFeature_RNA) / log10(allcells$nCount_RNA)
+```
+
+## 3.2 Add further info to metadata
+
+-   Store EGFP and MT content per cells in metadata
+
+```{r}
+# Add EGFP gene expression percentage
+allcells$EGFPratio <- PercentageFeatureSet(object = allcells, pattern = "EGFP")
+
+# Add mitochondrial gene expression percentage
+allcells$MTratio <- PercentageFeatureSet(object = allcells, pattern = "mt-*")
+
+# Add cell IDs to metadata
+allcells$cells <- rownames(allcells@meta.data)
+
+#Create a sample colum
+allcells$sample <- "GFP+_sort"
+
+# Rename metadata columns 
+allcells@meta.data <- allcells@meta.data %>% dplyr::rename(seq_folder = orig.ident, nUMI = nCount_RNA, nGene = nFeature_RNA)
+
+```
+
+```{r}
+# Save unfiltered Seurat object 
+save(allcells, file="RDS_files/Script1_Armbruster2026_unfiltered.rds")
+```
+
+```{r}
+# Extract metadata for QC
+metadata <- allcells@meta.data
+```
+
+## 3.3 Assessing QC metrics
+
+### 3.3.1 Cell number
+
+```{r}
+# Plot of cell number
+metadata %>%
+ggplot(aes(x=sample, fill=sample)) +
+geom_bar() +
+theme_classic() +
+theme(legend.position = "none") +
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+theme(plot.title = element_text(hjust=0.5, face="bold")) +
+ggtitle("Cell number") +
+annotate("text", x = 1, y = length(rownames(metadata))/2, label = length(rownames(metadata)), size = 5, color = "black")
+```
+
+### 3.3.2 Counts per cell
+
+```{r}
+metadata %>%
+ggplot(aes(x=sample, y=log10(nUMI), fill=sample)) +
+geom_violin() +
+theme_classic() +
+theme(legend.position = "none") +
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+theme(plot.title = element_text(hjust=0.5, face="bold")) +
+ggtitle("UMIs per cell") +
+geom_jitter(shape=16, position=position_jitter(0.2), cex=1) +
+stat_summary(fun.y=mean, geom="point", size=30, color="red", shape=95)
+```
+
+### 3.3.3 Genes per cell
+
+Vln Plot:
+
+```{r}
+metadata %>%
+ggplot(aes(x=sample, y=log10(nGene), fill=sample)) +
+geom_violin() +
+theme_classic() +
+theme(legend.position = "none") +
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+theme(plot.title = element_text(hjust=0.5, face="bold")) +
+ggtitle("Genes per cell") +
+geom_jitter(shape=16, position=position_jitter(0.2), cex=1) +
+stat_summary(fun.y=mean, geom="point", size=30, color="red", shape=95) 
+```
+
+### 3.3.4 Mitochondrial Content
+
+```{r}
+# Define borders
+lines3 <- data.frame(Ref = c("MT mean"), vals = mean(metadata$MTratio))
+
+#Plot mitochondiral content as density plot
+metadata %>%
+ggplot(aes(color=sample, x=MTratio, fill= sample)) +
+geom_density(alpha = 0.2) +
+theme_classic() +
+geom_vline(data = lines3 , aes(xintercept = vals, colour = Ref)) + 
+annotate("text", x = lines3$vals + 0.35, y = 5, label = round(lines3$vals,2), size = 5, color = "turquoise")
+```
+
+### 3.3.5 EGFPratio
+
+```{r}
+# Define borders
+lines3 <- data.frame(Ref = c("EGFP mean"), vals = mean(metadata$EGFPratio))
+
+#Plot EGFP content as density plot
+metadata %>%
+ggplot(aes(color=sample, x=EGFPratio, fill= sample)) +
+geom_density(alpha = 0.2) +
+theme_classic() +
+geom_vline(data = lines3 , aes(xintercept = vals, colour = Ref)) +
+annotate("text", x = lines3$vals + 0.35, y = 1, label = round(lines3$vals,2), size = 5, color = "darkgreen")
+```
+
+### 3.3.6 Detected UMIs vs detected genes
+
+```{r}
+# Visualize the detected UMIs versus detected genes colored by mitochondrial content
+metadata %>%
+ggplot(aes(x=nUMI, y=nGene, color=MTratio)) +
+geom_point() +
+scale_colour_gradient(low = "gray90", high = "green") +
+stat_smooth(method=lm) +
+scale_x_log10() +
+scale_y_log10() +
+theme_classic() +
+geom_hline(yintercept = 500) +
+facet_wrap(~sample)
+
+```
+
+# 4 Filtering
+
+## 4.1 Cell level filtering
+
+-   Filtering thresholds:
+
+    -   nGene \>500
+
+    -   Mtratio \< 8 (only cells with less then 8 % mitochondrial reads)
+    
+    -   Positive for EGFP expression 
+
+```{r}
+filtered_cells <- subset(x = allcells, subset = (nGene >=500 & MTratio < 8 & EGFPratio > 0))
+```
+
+## 4.2 Gene level filtering
+
+-   Will remove genes that are expressed in less than 5 cells
+
+```{r}
+print(paste("Gene number before:", length(rownames(filtered_cells))))
+
+# Only keep genes expressed in at least 5 cells
+counts <- GetAssayData(object = filtered_cells, slot = "counts")
+nonzero <- counts > 0
+keep_genes <- Matrix::rowSums(nonzero) >=5
+filtered_counts <- counts[keep_genes,]
+filtered_cells <- CreateSeuratObject(filtered_counts, meta.data = filtered_cells@meta.data)
+
+print(paste("Gene number after:", length(rownames(filtered_cells))))
+```
+
+# 5. Reassess QC
+
+```{r}
+metadata_clean <- filtered_cells@meta.data
+```
+
+### 5.1 Cell number after filtering
+
+```{r}
+# Plot of cell number after filtering
+metadata_clean %>%
+ggplot(aes(x=sample, fill=sample)) +
+geom_bar(fill ="seagreen4") +
+theme_classic() +
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+theme(plot.title = element_text(hjust=0.5, face="bold")) +
+ggtitle("NCells") +
+annotate("text", x = 1, y = length(rownames(metadata_clean))/2, label = length(rownames(metadata_clean)), size = 5, color = "black")
+```
+
+### 5.2 Counts per cell after filtering
+
+```{r}
+metadata_clean %>%
+ggplot(aes(x=sample, y=log10(nUMI), fill=sample)) +
+geom_violin(fill ="seagreen4") +
+theme_classic() +
+theme(legend.position = "none") +
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+theme(plot.title = element_text(hjust=0.5, face="bold")) +
+ggtitle("UMIs per cell") +
+geom_jitter(shape=16, position=position_jitter(0.2), cex=1) +
+stat_summary(fun.y=mean, geom="point", size=30, color="red", shape=95)
+```
+
+### 5.3 Genes per cell after filtering
+
+```{r}
+metadata_clean %>%
+ggplot(aes(x=sample, y=log10(nGene), fill=sample)) +
+geom_violin(fill ="seagreen4") +
+theme_classic() +
+theme(legend.position = "none") +
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+theme(plot.title = element_text(hjust=0.5, face="bold")) +
+ggtitle("Genes per cell") +
+geom_jitter(shape=16, position=position_jitter(0.2), cex=1) +
+stat_summary(fun.y=mean, geom="point", size=30, color="red", shape=95)
+```
+
+# 6 Save Filtered Seurat Object
+
+```{r}
+# Save filtered Seurat object
+saveRDS(filtered_cells, file="RDS_files/Script1_Armbruster2026_filtered.rds")
+```
+
+```{r}
+# Session info
+sessionInfo()
+```
+
+```{r}
+# Remove objects to reduce memory usage 
+rm(list=ls())
+gc()
+```

@@ -1,0 +1,709 @@
+---
+title: "Script11_Armbruster2026_Kamath_MesdiDANeurons"
+author: "Daniel Armbruster"
+date: "2026-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+- In this script we  downloaded and reanalyzed the scRNA-seq data on the human substanitia nigra pars compacta (A9) DA neurons published by Kamath and colleagues (Kamath et al., 2022; DOI: 10.1038/s41593-022-01061-1)
+
+-   The data is deposited on the single cell portal of the broad institute and can be downloaded from: <https://singlecell.broadinstitute.org/single_cell/study/SCP1768/single-cell-genomic-profiling-of-human-dopamine-neurons-identifies-a-population-that-selectively-degenerates-in-parkinsons-disease-single-nuclei-data#study-download>
+
+-   The authors deposited the barcode, feature and matrix files as well as the final Seurat object metadata (containing cell type annotations) and UMAP coordinates of the relevant DA neurons. Thus, we need to create a Seurat object from the barcode, feature and matrix file, subset for the DA cell type containing clusters the authors present in Figure 1d and add their respective metadata and UMAP coordinates.
+
+- The session info including the used packages and their versions is provided at the end of this script.
+
+# 1. Load libraries
+
+```{r, message=FALSE, warning=FALSE}
+library(Seurat)
+library(dplyr)
+library(openxlsx)
+library(readr)
+library(ggplot2)
+library(stringr)
+library(cowplot)
+```
+
+# 2. Load data
+
+## 2.1 Load data and generate seurat object
+
+```{r}
+# Load barcode, feature and matrix file into sparse matrix
+kamath_sparse_matrix <- Read10X(data.dir = "Resources/Kamath2022/")
+
+# Generate Seurat object
+kamath_seurat <- CreateSeuratObject(kamath_sparse_matrix)
+
+rm(kamath_sparse_matrix)
+gc()
+```
+
+## 2.2 Load metadata and umap
+
+```{r}
+metadata <- read_tsv("Resources/Kamath2022/METADATA_PD.tsv") 
+
+metadata <- subset(metadata, species__ontology_label == "Homo sapiens")
+
+umap_coord <- read_tsv("Resources/Kamath2022/da_UMAP.tsv") 
+umap_coord <- umap_coord[-1, ]
+```
+
+# 3. Add metadata and UMAP coord. and subset data for cells in the DA neuron UMAP coordinate file
+
+```{r}
+# Subset for the neurons that are in the umap coordinate file of the DA clusters
+relevant_DA_cells <- umap_coord$NAME
+
+# Subset Seurat object for cells within the UMAP coordinate file of DA cells
+kamath_seurat <- subset(kamath_seurat, cells = relevant_DA_cells)
+
+# Rename metadata
+kamath_seurat@meta.data <- kamath_seurat@meta.data %>% dplyr::rename(nUMI = nCount_RNA, nGene = nFeature_RNA)
+
+# Subset Metadata for cells within the UMAP coordinate file of DA cells
+metadata_relevant <- metadata[metadata$NAME %in% relevant_DA_cells,]
+
+# Arrange rows of the metadata and the umap_coord based on the order in the seurat object and make rownames to cellnames 
+cell_order <- rownames(kamath_seurat@meta.data)
+metadata_relevant <- metadata_relevant %>% arrange(factor(NAME, levels = cell_order))
+metadata_relevant <- as.data.frame(metadata_relevant)
+rownames(metadata_relevant) <- metadata_relevant$NAME
+metadata_relevant <- metadata_relevant %>% dplyr::rename(NAME1 = NAME)  
+  umap_coord <- umap_coord %>% arrange(factor(NAME, levels = cell_order))
+umap_coord <- as.data.frame(umap_coord)
+rownames(umap_coord) <- umap_coord$NAME
+umap_coord <- umap_coord %>% dplyr::rename(NAME2 = NAME)
+
+# Check if now identical order of cells
+identical(colnames(kamath_seurat), rownames(metadata_relevant)) # True
+identical(colnames(kamath_seurat), rownames(umap_coord)) # True
+
+# Add metadata and umap coord. to seurat object 
+kamath_seurat <- AddMetaData(kamath_seurat, metadata = metadata_relevant)
+kamath_seurat <- AddMetaData(kamath_seurat, metadata = umap_coord)
+```
+
+## 3.1 Add the UMAP coordinates
+
+```{r}
+umap_coord2 <- umap_coord %>% dplyr::rename(UMAP_1 = X, UMAP_2 = Y)
+umap_coord2$Cell_Type <- NULL
+umap_coord2$NAME2 <- NULL
+umap_coord2 <- mutate(umap_coord2, across(c(UMAP_1, UMAP_2), as.numeric))
+umap_coord2 <- as.matrix(umap_coord2)
+kamath_seurat[["UMAP"]] <- CreateDimReducObject(embeddings = umap_coord2, key = "UMAP_", global = T, assay = "RNA")
+kamath_seurat <- NormalizeData(kamath_seurat)
+
+# Now we basically get the same UMAP plot as Kamath and colleagues show in Figure 1d
+DimPlot(kamath_seurat, group.by = "Cell_Type")
+Idents(kamath_seurat) <- "Cell_Type"
+```
+
+## 3.2 Save seurat object
+
+```{r}
+saveRDS(kamath_seurat, "RDS_files/Script11_Armbruster_2026_Kamath2022_A9neurons.rds")
+
+
+kamath_seurat <- readRDS("RDS_files/Script11_Armbruster_2026_Kamath2022_A9neurons.rds")
+```
+
+# 4. For figure 6
+
+## 4.1 UMAP with cluster annotation
+
+```{r}
+# Generate UMAP plot
+DefaultAssay(kamath_seurat) <- "RNA"
+
+Kamath_DimPlot <- DimPlot(kamath_seurat, pt.size = 2, label = T, repel = T, reduction = "UMAP", group.by = "Cell_Type") + 
+  NoLegend() +
+  labs(x = "UMAP 1", y = "UMAP 2") + 
+    theme(
+        plot.title = element_text(size = 16, face = "bold"), 
+    ) 
+
+Kamath_DimPlot
+
+
+ggsave(paste("Script11_Kamath2022_DimPlot.svg"), plot = Kamath_DimPlot, path = "Figures/Figure7_TransmitterPeptideCodes_human/", width = 5, height = 4)
+```
+
+## 4.2 Neurotransmitter Analysis
+
+```{r}
+seurat_object_to_analyse <- kamath_seurat
+
+# Count threshold for the marker genes
+expression_threshold <- 0
+# Cell type cluster annotation
+cell_clusters <- as.data.frame(seurat_object_to_analyse$Cell_Type)
+
+# Read the neurotransmitter/neuropeptide file (production and reception markers)
+gene_lists <- read.csv(file = "Resources/neurotransmitter_marker_human.csv", sep=";", skipNul = T, check.names = F)
+
+# Get Expression Matrix from your Seurat object
+expr_matrix <- GetAssayData(seurat_object_to_analyse, assay = "RNA", slot = "count")
+
+
+# Get raw count expression matrix for the peptide/transmitter marker genes per cell and add cell type information
+all_marker_genes <- unname(unlist(gene_lists))
+all_marker_genes <- all_marker_genes[all_marker_genes != ""]
+valid_genes <- intersect(all_marker_genes, rownames(expr_matrix))
+expr_matrix_relevant_genes <- expr_matrix[valid_genes, ]
+expr_matrix_relevant_genes_cells <- t(as.data.frame(expr_matrix_relevant_genes))
+
+
+
+# Get the average expression for the peptide/transmitter marker genes per cluster from the normalized count slot (data) in the RNA assay
+expr_matrix_relevant_genes_clusters <- AverageExpression(
+  seurat_object_to_analyse,
+  assays   = "RNA",
+  slot     = "data",
+  features = valid_genes,
+  group.by = "Cell_Type",
+  verbose  = FALSE
+)
+
+expr_matrix_relevant_genes_clusters <- as.data.frame(expr_matrix_relevant_genes_clusters)
+
+expr_matrix_relevant_genes_clusters <- expr_matrix_relevant_genes_clusters[match(valid_genes, rownames(expr_matrix_relevant_genes_clusters)), , drop = FALSE]
+
+expr_matrix_relevant_genes_clusters <- t(expr_matrix_relevant_genes_clusters)
+
+
+
+
+# Define all neurotransmitters
+all_neurotransmitters <- unique(sub("_out$|_in$", "", colnames(gene_lists)))
+
+# Initialize empty matrices for production and reception
+production_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+reception_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+
+# Set cell names as row names for both matrices
+rownames(production_matrix) <- colnames(expr_matrix)
+rownames(reception_matrix) <- colnames(expr_matrix)
+
+# Set neurotransmitters as column names
+colnames(production_matrix) <- all_neurotransmitters
+colnames(reception_matrix) <- all_neurotransmitters
+
+# Track processed neurotransmitters
+processed_neurotransmitters <- c()
+
+# Loop through each neurotransmitter to process production and reception markers
+for (gene_group_name in all_neurotransmitters) {
+
+  # Identify production markers
+  production_column <- paste0(gene_group_name, "_out")
+  if (production_column %in% colnames(gene_lists)) {
+    production_markers <- gene_lists[[production_column]][gene_lists[[production_column]] %in% rownames(expr_matrix)]
+  } else {
+    production_markers <- NULL
+  }
+
+  # Identify reception markers
+  reception_column <- paste0(gene_group_name, "_in")
+  if (reception_column %in% colnames(gene_lists)) {
+    reception_markers <- gene_lists[[reception_column]][gene_lists[[reception_column]] %in% rownames(expr_matrix)]
+  } else {
+    reception_markers <- NULL
+  }
+
+  # Identify producing cells
+  if (!is.null(production_markers) && length(production_markers) > 0) {
+    production_cells <- colSums(expr_matrix[production_markers, , drop = FALSE] > expression_threshold) > 0
+  } else {
+    production_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  
+  # Identify receiving cells
+  if (!is.null(reception_markers) && length(reception_markers) > 0) {
+    reception_cells <- colSums(expr_matrix[reception_markers, , drop = FALSE] > expression_threshold) > 0
+  } else {
+    reception_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  # Identify dbh_cells
+  dbh_cells <- expr_matrix["DBH", ] > expression_threshold
+  
+  # Handle special cases for dopaminergic and noradrenergic cells
+  if (gene_group_name == "dopa") {
+    production_cells <- production_cells & !dbh_cells
+    } else if (gene_group_name == "nora") {
+      dbh_cells <- expr_matrix["DBH", ] > expression_threshold
+      production_cells <- dbh_cells & production_cells
+      }
+
+  # Update production and reception matrices
+  production_matrix[, gene_group_name] <- as.numeric(production_cells)
+  reception_matrix[, gene_group_name] <- as.numeric(reception_cells)
+
+  # Store the classifications in Seurat object metadata
+  seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- as.numeric(production_cells)
+  seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- as.numeric(reception_cells)
+
+  # Mark this neurotransmitter as processed
+  processed_neurotransmitters <- c(processed_neurotransmitters, gene_group_name)
+}
+
+# Ensure all neurotransmitters are included in metadata, even if missing markers
+for (gene_group_name in all_neurotransmitters) {
+  if (!(gene_group_name %in% processed_neurotransmitters)) {
+    seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- 0
+    seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- 0
+    production_matrix[, gene_group_name] <- 0
+    reception_matrix[, gene_group_name] <- 0
+  }
+}
+
+# Threshold (% of cells that need to express neurotrans/neuropep) to get in plot 
+threshold <- 0.1
+
+# Get cluster identities from your Seurat object to include in the plot
+clusters <- rev(levels(seurat_object_to_analyse@active.ident))
+
+clusters <- str_sort(clusters, decreasing = T)
+
+# Create an empty matrix for storing the Fractions for both production and reception
+genegroup_Fraction_matrix <- matrix(0, nrow = length(clusters), ncol = length(colnames(gene_lists)))
+rownames(genegroup_Fraction_matrix) <- clusters
+
+# The column names will now include both 'production' and 'reception' for each neurotransmitter
+col_names <- colnames(gene_lists)
+col_names <- str_replace(col_names, "_out", "_production")
+col_names <- str_replace(col_names, "_in", "_reception")
+colnames(genegroup_Fraction_matrix) <- col_names
+
+# Loop through each cluster and calculate the Fraction for each neurotransmitter
+for (cluster in clusters) {
+  # Filter the Seurat object by cluster
+  cluster_cells <- WhichCells(seurat_object_to_analyse, idents = cluster)
+  cluster
+  for (name in colnames(gene_lists)) {
+    # Strip the "_out" for production and "_in" for reception when accessing metadata
+    name <- sub("_out$|_in$", "", name)
+    
+    # Construct the production and reception column names
+    production_colname <- paste0(name, "_production")
+    reception_colname <- paste0(name, "_reception")
+
+    # Try to extract production data, otherwise return a vector of zeros
+    production_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, production_colname], silent = TRUE)
+    if (inherits(production_cells, "try-error")) {
+      production_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Try to extract reception data, otherwise return a vector of zeros
+    reception_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, reception_colname], silent = TRUE)
+    if (inherits(reception_cells, "try-error")) {
+      reception_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Calculate the Fractions
+    production_Fraction <- sum(production_cells) / length(cluster_cells)
+    reception_Fraction <- sum(reception_cells) / length(cluster_cells)
+
+    # Store the Fraction values (try-catch ensures no indexing errors)
+    try(genegroup_Fraction_matrix[cluster, paste(name, "production", sep = "_")] <- production_Fraction, silent = TRUE)
+    try(genegroup_Fraction_matrix[cluster, paste(name, "reception", sep = "_")] <- reception_Fraction, silent = TRUE)
+  }
+}
+
+#-------------------------
+# Reshape the matrix for ggplot2
+Fraction_df <- reshape2::melt(genegroup_Fraction_matrix)
+
+# Change Fraction df colnames
+colnames(Fraction_df) <- c("Cluster", "Neurotransmitter_Type", "Fraction")
+
+
+
+# Identify neurotransmitter types where any cluster exceeds the threshold
+valid_types <- Fraction_df %>%
+  group_by(Neurotransmitter_Type) %>%
+  dplyr::filter(any(Fraction >= threshold)) %>%
+  pull(Neurotransmitter_Type) %>%
+  unique()
+
+
+# Overwrite automatic signal type to plot (>0.1 threshold) to include d1-like receptors
+valid_types <- c("dopa_production",
+  "dopa-d1like_reception",
+  "dopa-d2like_reception",
+  "nora_reception",
+  "gaba_production",
+  "gaba_reception",
+  "glut_production",
+  "glut_reception",
+  "chol_reception",
+  "glycin_production",
+  "glycin_reception",
+  "hist_production",
+  "hist_reception",
+  "5-HT_production",
+  "5-HT_reception"
+)
+
+
+
+# All transmitter/peptide Fractions per cluster 
+Fraction_df_all <- Fraction_df
+
+# Filter data: for visualization Keep all clusters for these neurotransmitters
+Fraction_df <- Fraction_df %>%
+  dplyr::filter(Neurotransmitter_Type %in% valid_types)
+
+
+
+plot <- ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+  geom_tile(color = "black") +
+  #geom_text(aes(label = round(percentage, 2)),
+            #color = "black") +
+          scale_fill_gradientn(
+             colours = c("grey90","#fee0d2","#fb6a4a","#cb181d"),
+            trans = "sqrt",
+            limits = c(0, 0.75),#
+            oob = scales::squish) +
+          labs(title = NULL, x = NULL, y = NULL, fill = "Fraction of cells") +
+          theme_minimal(base_size = 14) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12),  
+                axis.text.y = element_text(size = 12, face = "bold",),
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+                legend.position = "right",
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank()) +
+                coord_fixed() +
+                geom_tile(color = "grey40", linewidth = 0.25)+
+                NoLegend()
+
+
+ggsave(paste("Script11_Kamath2022_Neurotransmitter_Sqrt.svg"), plot = plot, path = "Figures/Figure7_TransmitterPeptideCodes_human/", width = 16, height = 8, bg = "white")
+
+#______________________________________
+# Generate and save legend
+#______________________________________
+
+legend_plot <- cowplot::ggdraw(get_legend(
+  ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+    geom_tile() +
+    scale_fill_gradientn(
+  colours = c("grey90", "#fee0d2", "#fb6a4a", "#cb181d"),
+  trans  = "sqrt",
+  limits = c(0, 0.75),
+  oob    = scales::squish,
+  breaks = c(0,0.05, 0.25, 0.50, 0.75),
+  labels = scales::label_percent(accuracy = 1)
+) +
+    theme_minimal() +
+    theme(legend.position = "right")
+))
+
+#Save the legend
+ggsave("Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neurotransmitter_Sqrt_Legend.svg", plot = legend_plot, width = 2, height = 4, bg = "white")
+
+print(plot)
+print(legend_plot)
+
+
+# Save numerical data of the analysis
+dataset_names <- list("used_markers_genes" = gene_lists, "raw_counts_cells" = expr_matrix_relevant_genes_cells, "assigned_clusters" = cell_clusters, "avg_norm_counts_cluster" = expr_matrix_relevant_genes_clusters, "fraction_per_cluster" = Fraction_df_all )
+
+openxlsx::write.xlsx(dataset_names, file = "D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neurotransmitter_Analyis.xlsx", rowNames = TRUE)
+```
+
+## 4.3 Neuropeptide Analysis
+
+```{r}
+
+seurat_object_to_analyse <- kamath_seurat
+
+# Count threshold for the marker genes
+expression_threshold <- 0
+# Cell type cluster annotation
+cell_clusters <- as.data.frame(seurat_object_to_analyse$Cell_Type)
+
+# Read the neurotransmitter/neuropeptide file (production and reception markers)
+gene_lists <- read.csv(file = "Resources/neuropeptides_marker_human.csv", sep=";", skipNul = T, check.names = F)
+
+# Get Expression Matrix from your Seurat object
+expr_matrix <- GetAssayData(seurat_object_to_analyse, assay = "RNA", slot = "count")
+
+
+# Get raw count expression matrix for the peptide/transmitter marker genes per cell and add cell type information
+all_marker_genes <- unname(unlist(gene_lists))
+all_marker_genes <- all_marker_genes[all_marker_genes != ""]
+valid_genes <- intersect(all_marker_genes, rownames(expr_matrix))
+expr_matrix_relevant_genes <- expr_matrix[valid_genes, ]
+expr_matrix_relevant_genes_cells <- t(as.data.frame(expr_matrix_relevant_genes))
+
+
+
+# Get the average expression for the peptide/transmitter marker genes per cluster from the normalized count slot (data) in the RNA assay
+expr_matrix_relevant_genes_clusters <- AverageExpression(
+  seurat_object_to_analyse,
+  assays   = "RNA",
+  slot     = "data",
+  features = valid_genes,
+  group.by = "Cell_Type",
+  verbose  = FALSE
+)
+
+expr_matrix_relevant_genes_clusters <- as.data.frame(expr_matrix_relevant_genes_clusters)
+
+expr_matrix_relevant_genes_clusters <- expr_matrix_relevant_genes_clusters[match(valid_genes, rownames(expr_matrix_relevant_genes_clusters)), , drop = FALSE]
+
+expr_matrix_relevant_genes_clusters <- t(expr_matrix_relevant_genes_clusters)
+
+
+
+
+# Define all neurotransmitters
+all_neurotransmitters <- unique(sub("_out$|_in$", "", colnames(gene_lists)))
+
+# Initialize empty matrices for production and reception
+production_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+reception_matrix <- matrix(0, nrow = ncol(expr_matrix), ncol = length(all_neurotransmitters))
+
+# Set cell names as row names for both matrices
+rownames(production_matrix) <- colnames(expr_matrix)
+rownames(reception_matrix) <- colnames(expr_matrix)
+
+# Set neurotransmitters as column names
+colnames(production_matrix) <- all_neurotransmitters
+colnames(reception_matrix) <- all_neurotransmitters
+
+# Track processed neurotransmitters
+processed_neurotransmitters <- c()
+
+# Loop through each neurotransmitter to process production and reception markers
+for (gene_group_name in all_neurotransmitters) {
+
+  # Identify production markers
+  production_column <- paste0(gene_group_name, "_out")
+  if (production_column %in% colnames(gene_lists)) {
+    production_markers <- gene_lists[[production_column]][gene_lists[[production_column]] %in% rownames(expr_matrix)]
+  } else {
+    production_markers <- NULL
+  }
+
+  # Identify reception markers
+  reception_column <- paste0(gene_group_name, "_in")
+  if (reception_column %in% colnames(gene_lists)) {
+    reception_markers <- gene_lists[[reception_column]][gene_lists[[reception_column]] %in% rownames(expr_matrix)]
+  } else {
+    reception_markers <- NULL
+  }
+
+  # Identify producing cells
+  if (!is.null(production_markers) && length(production_markers) > 0) {
+    production_cells <- colSums(expr_matrix[production_markers, , drop = FALSE] > expression_threshold) > 0
+  } else {
+    production_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  
+  # Identify receiving cells
+  if (!is.null(reception_markers) && length(reception_markers) > 0) {
+    reception_cells <- colSums(expr_matrix[reception_markers, , drop = FALSE] > expression_threshold) > 0
+  } else {
+    reception_cells <- rep(FALSE, ncol(expr_matrix))  # Ensure 0 for all cells
+  }
+  # Identify dbh_cells
+  dbh_cells <- expr_matrix["DBH", ] > expression_threshold
+  
+  # Handle special cases for dopaminergic and noradrenergic cells
+  if (gene_group_name == "dopa") {
+    production_cells <- production_cells & !dbh_cells
+    } else if (gene_group_name == "nora") {
+      dbh_cells <- expr_matrix["DBH", ] > expression_threshold
+      production_cells <- dbh_cells & production_cells
+      }
+
+  # Update production and reception matrices
+  production_matrix[, gene_group_name] <- as.numeric(production_cells)
+  reception_matrix[, gene_group_name] <- as.numeric(reception_cells)
+
+  # Store the classifications in Seurat object metadata
+  seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- as.numeric(production_cells)
+  seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- as.numeric(reception_cells)
+
+  # Mark this neurotransmitter as processed
+  processed_neurotransmitters <- c(processed_neurotransmitters, gene_group_name)
+}
+
+# Ensure all neurotransmitters are included in metadata, even if missing markers
+for (gene_group_name in all_neurotransmitters) {
+  if (!(gene_group_name %in% processed_neurotransmitters)) {
+    seurat_object_to_analyse[[paste0(gene_group_name, "_production")]] <- 0
+    seurat_object_to_analyse[[paste0(gene_group_name, "_reception")]] <- 0
+    production_matrix[, gene_group_name] <- 0
+    reception_matrix[, gene_group_name] <- 0
+  }
+}
+
+# Threshold (% of cells that need to express neurotrans/neuropep) to get in plot 
+threshold <- 0.1
+
+# Get cluster identities from your Seurat object to include in the plot
+clusters <- rev(levels(seurat_object_to_analyse@active.ident))
+
+clusters <- str_sort(clusters, decreasing = T)
+
+# Create an empty matrix for storing the Fractions for both production and reception
+genegroup_Fraction_matrix <- matrix(0, nrow = length(clusters), ncol = length(colnames(gene_lists)))
+rownames(genegroup_Fraction_matrix) <- clusters
+
+# The column names will now include both 'production' and 'reception' for each neurotransmitter
+col_names <- colnames(gene_lists)
+col_names <- str_replace(col_names, "_out", "_production")
+col_names <- str_replace(col_names, "_in", "_reception")
+colnames(genegroup_Fraction_matrix) <- col_names
+
+# Loop through each cluster and calculate the Fraction for each neurotransmitter
+for (cluster in clusters) {
+  # Filter the Seurat object by cluster
+  cluster_cells <- WhichCells(seurat_object_to_analyse, idents = cluster)
+  cluster
+  for (name in colnames(gene_lists)) {
+    # Strip the "_out" for production and "_in" for reception when accessing metadata
+    name <- sub("_out$|_in$", "", name)
+    
+    # Construct the production and reception column names
+    production_colname <- paste0(name, "_production")
+    reception_colname <- paste0(name, "_reception")
+
+    # Try to extract production data, otherwise return a vector of zeros
+    production_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, production_colname], silent = TRUE)
+    if (inherits(production_cells, "try-error")) {
+      production_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Try to extract reception data, otherwise return a vector of zeros
+    reception_cells <- try(seurat_object_to_analyse@meta.data[cluster_cells, reception_colname], silent = TRUE)
+    if (inherits(reception_cells, "try-error")) {
+      reception_cells <- rep(0, length(cluster_cells))
+    }
+
+    # Calculate the Fractions
+    production_Fraction <- sum(production_cells) / length(cluster_cells)
+    reception_Fraction <- sum(reception_cells) / length(cluster_cells)
+
+    # Store the Fraction values (try-catch ensures no indexing errors)
+    try(genegroup_Fraction_matrix[cluster, paste(name, "production", sep = "_")] <- production_Fraction, silent = TRUE)
+    try(genegroup_Fraction_matrix[cluster, paste(name, "reception", sep = "_")] <- reception_Fraction, silent = TRUE)
+  }
+}
+
+#-------------------------
+# Reshape the matrix for ggplot2
+Fraction_df <- reshape2::melt(genegroup_Fraction_matrix)
+
+# Change Fraction df colnames
+colnames(Fraction_df) <- c("Cluster", "Neurotransmitter_Type", "Fraction")
+
+
+
+# Identify neurotransmitter types where any cluster exceeds the threshold
+valid_types <- Fraction_df %>%
+  group_by(Neurotransmitter_Type) %>%
+  dplyr::filter(any(Fraction >= threshold)) %>%
+  pull(Neurotransmitter_Type) %>%
+  unique()
+
+
+# All transmitter/peptide Fractions per cluster 
+Fraction_df_all <- Fraction_df
+
+# Filter data: for visualization Keep all clusters for these neurotransmitters
+Fraction_df <- Fraction_df %>%
+  dplyr::filter(Neurotransmitter_Type %in% valid_types)
+
+
+
+plot <- ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+  geom_tile(color = "black") +
+  #geom_text(aes(label = round(percentage, 2)),
+            #color = "black") +
+          scale_fill_gradientn(
+             colours = c("grey90","#fee0d2","#fb6a4a","#cb181d"),
+            trans = "sqrt",
+            limits = c(0, 0.75),#
+            oob = scales::squish) +
+          labs(title = NULL, x = NULL, y = NULL, fill = "Fraction of cells") +
+          theme_minimal(base_size = 14) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12),  
+                axis.text.y = element_text(size = 12, face = "bold",),
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+                legend.position = "right",
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank()) +
+                coord_fixed() +
+                geom_tile(color = "grey40", linewidth = 0.25)+
+                NoLegend()
+
+
+ggsave(paste("Script11_Kamath2022_Neuropeptides_Sqrt.svg"), plot = plot, path = "Figures/Figure7_TransmitterPeptideCodes_human/", width = 16, height = 8, bg = "white")
+
+#______________________________________
+# Generate and save legend
+#______________________________________
+
+legend_plot <- cowplot::ggdraw(get_legend(
+  ggplot(Fraction_df, aes(x = Neurotransmitter_Type, y = Cluster, fill = Fraction)) +
+    geom_tile() +
+    scale_fill_gradientn(
+  colours = c("grey90", "#fee0d2", "#fb6a4a", "#cb181d"),
+  trans  = "sqrt",
+  limits = c(0, 0.75),
+  oob    = scales::squish,
+  breaks = c(0,0.05, 0.25, 0.50, 0.75),
+  labels = scales::label_percent(accuracy = 1)
+) +
+    theme_minimal() +
+    theme(legend.position = "right")
+))
+
+#Save the legend
+ggsave("Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neuropeptides_Sqrt_Legend.svg", plot = legend_plot, width = 2, height = 4, bg = "white")
+
+print(plot)
+print(legend_plot)
+
+
+# Save numerical data of the analysis
+dataset_names <- list("used_markers_genes" = gene_lists, "raw_counts_cells" = expr_matrix_relevant_genes_cells, "assigned_clusters" = cell_clusters, "avg_norm_counts_cluster" = expr_matrix_relevant_genes_clusters, "fraction_per_cluster" = Fraction_df_all )
+
+openxlsx::write.xlsx(dataset_names, file = "D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neuropeptides_Analyis.xlsx", rowNames = TRUE)
+```
+
+```{r}
+# Get cluster cell number
+n_cells <- FetchData(kamath_seurat, 
+                     vars = c("Cell_Type", "species")) %>% dplyr::count(Cell_Type,species ) %>% tidyr::spread(Cell_Type,n)
+
+n_cells <- as.data.frame(t(n_cells))
+n_cells<- n_cells %>% dplyr::filter(row_number() != 1)
+colnames(n_cells) <- "CellNumber"
+n_cells$CellNumber <- as.numeric(n_cells$CellNumber)
+
+n_cells
+
+```
+
+```{r}
+# Session info
+sessionInfo()
+```
+
+
+```{r}
+rm(list=ls())
+gc()
+```

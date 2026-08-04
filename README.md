@@ -54,4 +54,4 @@ Some datasets used in this study are not included in this repository because of 
 | Raj et al., 2020, 5 dpf whole brain  scRNA-seq data | GEO GSE158142 |
 | Pandey et al., 2023, 6 dpf - adult whole telencephalon scRNA-seq  data | GEO GSE212314 |
 | Kamath et al., 2022, Human A9 SNpc DA neurons scRNA-seq data | https://singlecell.broadinstitute.org/single_cell/study/SCP1768/ |
-| Yao et al., 2023, Whole mouse brain dataset | Followed: https://github.com/AllenInstitute/abc_atlas_access/blob/main/notebooks/general_accessing_10x_snRNASeq_tutorial.ipynb |
+| Yao et al., 2023, Whole mouse brain dataset | Followed instructions from https://github.com/AllenInstitute/abc_atlas_access/blob/main/notebooks/general_accessing_10x_snRNASeq_tutorial.ipynb |

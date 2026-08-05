@@ -1,5 +1,3 @@
 # Mapped_Data
 
-Large mapped sequencing files are not included in this repository because of GitHub file size limitations.
-
-They can be downloaded from GEO under accession GSE337333.
+Due to GitHub file size limitations, the mapped sequencing files are not included in this repository. They can be downloaded from GEO under accession GSE337333.

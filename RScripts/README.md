@@ -58,4 +58,4 @@ R Markdown scripts used for all preprocessing and data analysis steps, required 
 
 ## Complete Session Information
 
-The repository also includes rendered HTML versions of all R notebooks. These contain the complete `sessionInfo()` information from the original analysis sessions used to generate the published figures. 
+The repository also includes rendered HTML versions of all R notebooks. These contain the complete `sessionInfo()` information from the original analysis sessions used to generate the published data. 

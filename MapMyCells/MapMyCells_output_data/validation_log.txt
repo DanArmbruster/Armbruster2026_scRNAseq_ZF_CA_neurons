@@ -1,0 +1,43 @@
+9.10282e-04 seconds == WARNING: Input data is in CSV format; converting to h5ad file at modified_expression_matrix_mousenames-2026-07-30-13-34-37.h5ad
+3.78193e+00 seconds == WARNING: It appears that your h5ad file has genes as rows and cells as columns
+Example row indices ['1110004F10Rik' '1110038F14Rik' '1110059G10Rik' '1500009L16Rik'
+ '1700017B05Rik']
+Example column indices ['AAACCCACACTCCGGA_Hyp3' 'AAACCCATCTACTATC_Hb3' 'AAACGAAAGGCTTCCG_PrT'
+ 'AAACGAACAAGTGCAG_pTub' 'AAACGAAGTCTCGGGT_vFb.Prog2']
+We will transpose this for you so that rows are cells and columns are genes
+4.21707e+00 seconds == DONE VALIDATING modified_expression_matrix_mousenames.csv; reformatted file written to modified_expression_matrix_mousenames_20260730133436.validated_by_MMC.h5ad
+
+4.25315e+00 seconds == CLEANING UP
+4.34534e+00 seconds == Validation run time:  4.276348352432251
+4.87018e-03 seconds == ENV: is_torch_available: False
+4.88067e-03 seconds == ENV: is_cuda_available: False
+4.88353e-03 seconds == ENV: use_torch: False
+4.88758e-03 seconds == ENV: multiprocessing start method: fork
+4.89068e-03 seconds == ENV: Python version: 3.10.13 (main, Jul  2 2026, 00:18:34) [GCC 11.5.0 20240719 (Red Hat 11.5.0-5)]
+4.89402e-03 seconds == ENV: anndata version: 0.11.4
+4.89640e-03 seconds == ENV: numpy version: 2.2.6
+5.14507e-03 seconds == BENCHMARK: spent 2.4319e-04 seconds validating config and copying data
+5.20921e-03 seconds == using precomputed_stats_ABC_revision_230821.h5 for precomputed_stats
+5.21207e-03 seconds == reading taxonomy_tree from precomputed_stats_ABC_revision_230821.h5
+4.64000e-01 seconds == ***Checking to see if we need to map query genes onto reference dataset
+2.41897e+01 seconds == Reference data belongs to species Balb/c mouse:10090
+2.41915e+01 seconds == Reference genes are from authority 'ENSEMBL'
+2.42170e+01 seconds == Mapping input genes to 'Balb/c mouse:10090 -- ENSEMBL' using
+http://github.com/AllenInstitute/mmc_gene_mapper version 0.2.1
+backed by database file: mmc_gene_mapper.2025-08-04.db
+created on: 2025-08-04-18-10-52
+hash: md5:755b0724c2ff00cc199f48e2718a09e5
+8.49401e+01 seconds == Based on 11230 genes, your input data is from species 'Balb/c mouse:10090'
+8.50146e+01 seconds == Input genes are from species 'Balb/c mouse:10090'
+8.50175e+01 seconds == Mapping 11490 input genes from 'symbols' to 'ENSEMBL' (e.g. ['1110004F10Rik' '1110038F14Rik' '1110059G10Rik' '1500009L16Rik'
+ '1700017B05Rik'])
+8.52445e+01 seconds == ***Mapping of query genes to reference dataset complete
+8.59357e+01 seconds == WARNING: 2512 marker genes were not present in the query dataset. They have been ignored
+8.59405e+01 seconds == BENCHMARK: spent 6.9541e-01 seconds creating query marker cache
+8.59491e+01 seconds == Scanning unlabeled data to check that it is >= 0
+8.61507e+01 seconds == Verified that unlabeled data is >= 0
+8.61509e+01 seconds == Running CPU implementation of type assignment.
+1.03146e+02 seconds == BENCHMARK: spent 1.7205e+01 seconds assigning cell types
+1.03146e+02 seconds == Writing marker genes to output file
+1.03515e+02 seconds == MAPPING FROM SPECIFIED MARKERS RAN SUCCESSFULLY
+1.03515e+02 seconds == CLEANING UP

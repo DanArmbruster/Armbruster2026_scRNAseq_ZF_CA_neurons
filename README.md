@@ -46,12 +46,12 @@ This repository contains the code, intermediate resources, and analysis workflow
 | **Armbruster2026_YaoWMBAnalysis.ipynb** | Downloads a subset of the Allen Institute Whole Mouse Brain (WMB) dataset (see below under **External datasets and large data files**), prepares an AnnData object for  analysis and compares marker gene expression between selected zebrafish CA clusters and their corresponding MapMyCells-assigned mouse brain subclasses shown in Figure 5. |
 
 ## External datasets and large data files
-Some datasets used in this study are not included in this repository because of GitHub file size limitations or because they were previously published and are publicly available elsewhere. The resources listed below are required to reproduce all analyses.
+Some datasets used in this study are not included in this repository because of GitHub file size limitations or because they were published by other authors and are publicly available elsewhere. The resources listed below are required to reproduce all analyses.
 
-| Dataset | Resource |
-|--- | --- | 
-| Mapped zebrafish CA neuron sequencing data created in this study |GEO GSE337333 |
-| Raj et al., 2020, 5 dpf whole brain  scRNA-seq data | GEO GSE158142 |
-| Pandey et al., 2023, 6 dpf - adult whole telencephalon scRNA-seq  data | GEO GSE212314 |
-| Kamath et al., 2022, Human A9 SNpc DA neurons scRNA-seq data | https://singlecell.broadinstitute.org/single_cell/study/SCP1768/ |
-| Yao et al., 2023, Whole mouse brain dataset | Followed instructions from https://github.com/AllenInstitute/abc_atlas_access/blob/main/notebooks/general_accessing_10x_snRNASeq_tutorial.ipynb |
+| Dataset | Reference | Access |
+|--- | --- | --- |
+| Mapped zebrafish CA neuron scRNA-seq data | this study | GEO GSE337333 |
+| 5 dpf whole brain  scRNA-seq data | Raj et al., 2020 (10.1016/j.neuron.2020.09.023) | GEO GSE158142 |
+| 6 dpf to adult whole telencephalon scRNA-seq  data | Pandey et al., 2023 (10.1101/gr.277278.122) | GEO GSE212314 |
+| Human A9 SNpc DA neurons scRNA-seq data | Kamath et al., 2022 (10.1038/s41593-022-01061-1) | https://singlecell.broadinstitute.org/single_cell/study/SCP1768/ |
+| Whole mouse brain scRNA-seq data | Yao et al., 2023 (10.1038/s41586-023-06812-z) |Followed instructions from https://github.com/AllenInstitute/abc_atlas_access/blob/main/notebooks/general_accessing_10x_snRNASeq_tutorial.ipynb |

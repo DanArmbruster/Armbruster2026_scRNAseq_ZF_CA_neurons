@@ -9,14 +9,13 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
 -   In this script we performed normalization, cell cycle correction, dimensionality reduction, clustering, and annotation of the filtered RDS file we generated in Script 2.
 
 -   Additionally, we calculated data on the differentially expressed genes and extracted differenitally expressed transcription factors which are part of Table S1. Also, in this script we generated the visualizations of Figure 1C-D and Figure S2A-D.
 
 -   Moreover, we characterized neurotransmitter and neuropeptide production/reception signatures across clusters and generated the corresponding visualization depicted in Figure 6A and B as well as the associated data presented in Table S6C-E and Table S6J-L.
 
-- The session info including the used packages and their versions is provided at the end of this script.
+-   The session info including the used packages and their versions is provided at the end of this script.
 
 # 1. Load Packages
 

@@ -1,7 +1,7 @@
 # Armbruster et al. (2026)
 ## scRNA-seq reveals zebrafish catecholaminergic neuron subtypes with complex neurotransmitter and neuropeptide profiles
 
-This repository contains the code, intermediate resources, and analysis workflows accompanying Armbruster et al. (2026). It includes all R Markdown scripts and Python notebooks required to reproduce the preprocessing, downstream analyses, figures, and supplementary tables presented in the manuscript.
+This repository contains the code, intermediate resources, and analysis workflows accompanying Armbruster et al. (2026). It includes all R Markdown scripts and Python notebooks required to reproduce the preprocessing, downstream analyses, figures, and supplementary tables presented in the manuscript. Additionally the `RScripts/` and `PythonNotebooks/` directories contain rendered HTML versions of the scripts allowing to inspect analyses and their results without the need to execute the code. 
 
 ---
 

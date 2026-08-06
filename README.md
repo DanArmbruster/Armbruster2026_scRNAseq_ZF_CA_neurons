@@ -18,7 +18,7 @@ This repository contains the code, intermediate resources, and analysis workflow
 | **PythonNotebooks/** | Python notebooks used for MapMyCells analyses, cross-species comparisons and generation of Figure 5. |
 | **rawcount_csv_of_Figure1c_clusters/** | Raw count table of the annotated data presented in Figure 1C. File not included due to its size but can be recreated running the scripts and downloaded from the NCBI Gene Expression Omnibus under the accession number GSE337333. |
 | **RDS_files/** | Intermediate Seurat objects generated during the analysis. These files are not included because of their size but can be recreated by running the analysis scripts. |
-| **Resources/** | Additional ressources required for the analyses (e.g. lists of transcription factors, cell cycle genes and neurotransmitter release markers). |
+| **Resources/** | Additional ressources required for the analyses (e.g. lists of transcription factors, cell cycle genes and neurotransmitter release markers). Instructions on how to access the datasets used in our analyses that were previously published by other authors are provided at the end of the main README.md file as well as with more detailed information in the respective README files within the Resources/ subdirectories. |
 | **RScripts/** | R Markdown scripts used for all preprocessing and data analysis steps, required to generate figures and tables of the manuscript. |
 
 ## R Scripts Descriptions

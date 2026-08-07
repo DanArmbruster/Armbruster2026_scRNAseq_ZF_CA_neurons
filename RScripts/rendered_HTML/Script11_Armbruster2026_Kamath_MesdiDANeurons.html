@@ -397,8 +397,8 @@ kamath_seurat &lt;- CreateSeuratObject(kamath_sparse_matrix)
 rm(kamath_sparse_matrix)
 gc()</code></pre>
 <pre><code>##              used    (Mb) gc trigger    (Mb)   max used    (Mb)
-## Ncells    3942435   210.6    7680622   410.2    7680622   410.2
-## Vcells 2494331354 19030.3 8750656330 66762.3 9118900684 69571.7</code></pre>
+## Ncells    3942435   210.6    7680621   410.2    7680621   410.2
+## Vcells 2494331364 19030.3 8750656340 66762.3 9118900694 69571.7</code></pre>
 </div>
 <div id="load-metadata-and-umap" class="section level2">
 <h2>2.2 Load metadata and umap</h2>
@@ -782,7 +782,7 @@ print(plot)</code></pre>
 <pre class="r"><code># Save numerical data of the analysis
 dataset_names &lt;- list(&quot;used_markers_genes&quot; = gene_lists, &quot;raw_counts_cells&quot; = expr_matrix_relevant_genes_cells, &quot;assigned_clusters&quot; = cell_clusters, &quot;avg_norm_counts_cluster&quot; = expr_matrix_relevant_genes_clusters, &quot;fraction_per_cluster&quot; = Fraction_df_all )
 
-openxlsx::write.xlsx(dataset_names, file = &quot;D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neurotransmitter_Analyis.xlsx&quot;, rowNames = TRUE)</code></pre>
+openxlsx::write.xlsx(dataset_names, file = &quot;Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neurotransmitter_Analyis.xlsx&quot;, rowNames = TRUE)</code></pre>
 </div>
 <div id="neuropeptide-analysis" class="section level2">
 <h2>4.3 Neuropeptide Analysis</h2>
@@ -1043,7 +1043,7 @@ print(plot)</code></pre>
 <pre class="r"><code># Save numerical data of the analysis
 dataset_names &lt;- list(&quot;used_markers_genes&quot; = gene_lists, &quot;raw_counts_cells&quot; = expr_matrix_relevant_genes_cells, &quot;assigned_clusters&quot; = cell_clusters, &quot;avg_norm_counts_cluster&quot; = expr_matrix_relevant_genes_clusters, &quot;fraction_per_cluster&quot; = Fraction_df_all )
 
-openxlsx::write.xlsx(dataset_names, file = &quot;D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neuropeptides_Analyis.xlsx&quot;, rowNames = TRUE)</code></pre>
+openxlsx::write.xlsx(dataset_names, file = &quot;Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neuropeptides_Analyis.xlsx&quot;, rowNames = TRUE)</code></pre>
 <pre class="r"><code># Get cluster cell number
 n_cells &lt;- FetchData(kamath_seurat, 
                      vars = c(&quot;Cell_Type&quot;, &quot;species&quot;)) %&gt;% dplyr::count(Cell_Type,species ) %&gt;% tidyr::spread(Cell_Type,n)
@@ -1135,8 +1135,8 @@ sessionInfo()</code></pre>
 <pre class="r"><code>rm(list=ls())
 gc()</code></pre>
 <pre><code>##            used  (Mb) gc trigger    (Mb)   max used    (Mb)
-## Ncells  3894279 208.0    7680622   410.2    7680622   410.2
-## Vcells 12034807  91.9 5600420052 42727.9 9118900684 69571.7</code></pre>
+## Ncells  3894279 208.0    7680621   410.2    7680621   410.2
+## Vcells 12034805  91.9 5600420058 42727.9 9118900694 69571.7</code></pre>
 </div>
 </div>
 

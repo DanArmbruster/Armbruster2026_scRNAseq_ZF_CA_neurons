@@ -416,7 +416,7 @@ print(legend_plot)
 # Save numerical data of the analysis
 dataset_names <- list("used_markers_genes" = gene_lists, "raw_counts_cells" = expr_matrix_relevant_genes_cells, "assigned_clusters" = cell_clusters, "avg_norm_counts_cluster" = expr_matrix_relevant_genes_clusters, "fraction_per_cluster" = Fraction_df_all )
 
-openxlsx::write.xlsx(dataset_names, file = "D:/scRNAseq/10X/DA136/SeuratAnalysis_2024-09-03/Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neurotransmitter_Analyis.xlsx", rowNames = TRUE)
+openxlsx::write.xlsx(dataset_names, file = "Figures/Figure7_TransmitterPeptideCodes_human/Script11_Kamath2022_Neurotransmitter_Analyis.xlsx", rowNames = TRUE)
 ```
 
 ## 4.3 Neuropeptide Analysis
